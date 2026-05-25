@@ -11,7 +11,7 @@ Description : Bot WhatsApp multifonctions basé sur Baileys
 ⚡ Fonctions : Audio, Sticker, Mini-jeux, Admin, Utilitaires et plus
 
 📱 Suivez l'auteur :
-- Portfolio : https://psycho.is-a.dev
+- Portfolio : https://huggingface.co/spaces/Sidoineko/portfolio
 - GitHub : https://github.com/psycho237-prog
 - TikTok : https://www.tiktok.com/@gregoire_legrand
 - LinkedIn : https://www.linkedin.com/in/onana-gregoire-legrand-a18529282

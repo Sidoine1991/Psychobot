@@ -19,6 +19,7 @@ module.exports = {
 
         const categories = {
             "🤖 AI & DATA": ["ai", "aisay", "llama", "transcript", "translate", "imagine"],
+            "💼 K_JOBAGENT": ["careerops", "jobclip"],
             "🛠️ UTILS": ["about", "ping", "sticker", "say", "extract", "audio", "av", "chipmunks", "pp"],
             "🎮 JEUX": ["coinflip", "guess", "motgame", "listgame"],
             "👥 GROUPE": ["tagall", "add", "kick", "promote", "demote", "group", "delete"],
@@ -41,7 +42,7 @@ module.exports = {
         }
 
         helpText += `│\n│  💡 Tapez *${PREFIX}command* pour l'utiliser.\n`;
-        helpText += `│  🌐 *Portfolio:* https://psycho.is-a.dev\n╰───≼ 🔥 XYBERCLAN 🔥 ≽───╯`;
+        helpText += `│  🌐 *Portfolio:* https://huggingface.co/spaces/Sidoineko/portfolio\n╰───≼ 🔥 XYBERCLAN 🔥 ≽───╯`;
 
         try {
             await replyWithTag(sock, remoteJid, msg, helpText);
