@@ -180,6 +180,9 @@ const app = express();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
+const { registerCareerOpsRoutes } = require('./integrations/careerOpsRoutes');
+registerCareerOpsRoutes(app, () => sock);
+
 const __path = process.cwd();
 
 // --- Routes (Public Access) ---
@@ -203,6 +206,55 @@ app.get('/ping', (req, res) => res.status(200).json({
     timestamp: new Date().toISOString(),
     service: BOT_NAME
 }));
+
+// ============================================================================
+// ENDPOINT POUR ENVOYER DES MESSAGES WHATSAPP
+// ============================================================================
+app.post('/send-message', async (req, res) => {
+    try {
+        const { phone, message } = req.body;
+
+        // Validation
+        if (!phone || !message) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing phone or message in request body'
+            });
+        }
+
+        // Vérifier que le bot est connecté
+        if (!sock || !sock.user) {
+            return res.status(503).json({
+                success: false,
+                error: 'Bot not connected to WhatsApp'
+            });
+        }
+
+        // Formater le numéro (enlever le + et ajouter @s.whatsapp.net)
+        const cleanPhone = phone.replace(/[^0-9]/g, '');
+        const jid = cleanPhone + '@s.whatsapp.net';
+
+        // Envoyer le message
+        await sock.sendMessage(jid, { text: message });
+
+        console.log(`[SEND-MESSAGE] Message sent to ${phone}`);
+
+        res.status(200).json({
+            success: true,
+            phone: phone,
+            jid: jid,
+            message: 'Message sent successfully',
+            timestamp: new Date().toISOString()
+        });
+
+    } catch (error) {
+        console.error('[SEND-MESSAGE ERROR]:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
 
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
