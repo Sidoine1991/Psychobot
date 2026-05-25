@@ -443,7 +443,48 @@ async function startBot() {
             const user = sock.user.id.split(':')[0];
             broadcast({ type: 'connected', user });
 
-            const msgText = `*✅ 𝗦𝗲𝘀𝘀𝗶𝗼𝗻 𝗖𝗼𝗻𝗻𝗲𝗰𝘁𝗲𝗱!* \n\n🤖 *Bot:* ${BOT_NAME}\n📱 *User:* ${user}\n🔋 *Mode:* Core V2\n⏰ *Time:* ${new Date().toLocaleTimeString()}`;
+            const msgText = `*✅ SESSION CONNECTEE!*
+
+🤖 *Bot:* ${BOT_NAME}
+📱 *User:* ${user}
+🔋 *Mode:* Core V2
+⏰ *Time:* ${new Date().toLocaleTimeString()}
+
+━━━━━━━━━━━━━━━━━━━━
+📋 *COMMANDES PRINCIPALES*
+━━━━━━━━━━━━━━━━━━━━
+
+🤖 *IA & Creation*
+• !ai <question> - Chat avec l'IA
+• !imagine <texte> - Generer une image
+• !sticker - Convertir image en sticker
+• !translate <texte> - Traduction
+
+🎮 *Jeux & Fun*
+• !guess - Jeu devinette
+• !coinflip - Pile ou face
+• !motgame - Jeu de mots
+
+🎵 *Media*
+• !play <titre> - Telecharger audio
+• !audio - Extraire audio d'une video
+• !chipmunks - Effet voix chipmunk
+
+👥 *Groupe (Admin)*
+• !tagall - Mentionner tous
+• !kick @user - Expulser
+• !promote @user - Promouvoir admin
+• !demote @user - Retirer admin
+• !antilink on/off - Protection liens
+• !antidelete on/off - Anti-suppression
+
+🛠️ *Utilitaires*
+• !help - Liste complete
+• !ping - Tester le bot
+• !session - Info session
+• !transcript - Transcrire audio
+
+Type !help pour plus de details!`;
             await sock.sendMessage(sock.user.id, { text: msgText });
 
             // Critical: Force an immediate sync on first successful connection to ensure SESSION_DATA is populated on Render
