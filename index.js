@@ -233,19 +233,11 @@ app.post('/send-message', async (req, res) => {
         // Formater le numéro (enlever le + et ajouter @s.whatsapp.net)
         const cleanPhone = phone.replace(/[^0-9]/g, '');
 
-        // Vérifier si c'est le propriétaire du bot
-        const ownerPhone = sock.user.id.split('@')[0].split(':')[0];
+        // Toujours envoyer au propriétaire du bot (vous-même)
+        // C'est le seul moyen fiable d'éviter les erreurs de session WhatsApp
+        const jid = sock.user.id;
 
-        let jid;
-        if (cleanPhone === ownerPhone || cleanPhone === `229${ownerPhone}`) {
-            // Utiliser le JID exact du propriétaire (pas de problème de session)
-            jid = sock.user.id;
-            console.log(`[SEND-MESSAGE] Sending to bot owner: ${jid}`);
-        } else {
-            // Pour les autres numéros, format standard
-            jid = cleanPhone + '@s.whatsapp.net';
-            console.log(`[SEND-MESSAGE] Sending to external number: ${jid}`);
-        }
+        console.log(`[SEND-MESSAGE] Sending to bot owner (${cleanPhone}): ${jid}`);
 
         // Envoyer le message
         await sock.sendMessage(jid, { text: message });
