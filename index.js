@@ -261,6 +261,77 @@ app.post('/send-message', async (req, res) => {
     }
 });
 
+// ============================================================================
+// ENDPOINT POUR ENVOYER FICHIER + MESSAGE WHATSAPP
+// ============================================================================
+app.post('/send-file', async (req, res) => {
+    try {
+        const { phone, message, file_url, file_name, mime_type } = req.body;
+
+        // Validation
+        if (!phone || !file_url) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing phone or file_url in request body'
+            });
+        }
+
+        // Vérifier que le bot est connecté
+        if (!sock || !sock.user) {
+            return res.status(503).json({
+                success: false,
+                error: 'Bot not connected to WhatsApp'
+            });
+        }
+
+        const jid = sock.user.id;
+        console.log(`[SEND-FILE] Sending file to bot owner: ${jid}`);
+
+        // Télécharger le fichier depuis l'URL
+        const axios = require('axios');
+        const response = await axios.get(file_url, { responseType: 'arraybuffer' });
+        const fileBuffer = Buffer.from(response.data);
+
+        // Déterminer le type MIME
+        const finalMimeType = mime_type || response.headers['content-type'] || 'application/octet-stream';
+        const finalFileName = file_name || 'document';
+
+        console.log(`[SEND-FILE] File: ${finalFileName}, MIME: ${finalMimeType}, Size: ${fileBuffer.length} bytes`);
+
+        // Envoyer le message texte si fourni
+        if (message) {
+            await sock.sendMessage(jid, { text: message });
+            console.log(`[SEND-FILE] Caption sent`);
+        }
+
+        // Envoyer le fichier
+        await sock.sendMessage(jid, {
+            document: fileBuffer,
+            mimetype: finalMimeType,
+            fileName: finalFileName
+        });
+
+        console.log(`[SEND-FILE] File sent successfully`);
+
+        res.status(200).json({
+            success: true,
+            phone: phone,
+            jid: jid,
+            file_name: finalFileName,
+            file_size: fileBuffer.length,
+            message: 'File and message sent successfully',
+            timestamp: new Date().toISOString()
+        });
+
+    } catch (error) {
+        console.error('[SEND-FILE ERROR]:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
