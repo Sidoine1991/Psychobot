@@ -382,19 +382,32 @@ async function startBot() {
     if (!fs.existsSync(AUTH_FOLDER)) fs.mkdirSync(AUTH_FOLDER, { recursive: true });
 
     // --- SESSION_DATA Support (for Permanent Render Connection) ---
-    if (process.env.SESSION_DATA) {
+    const credsPath = path.join(AUTH_FOLDER, 'creds.json');
+    const backupPath = path.join(__dirname, 'session_backup.txt');
+
+    // Priorité 1 : SESSION_DATA env var (configuré manuellement sur Render)
+    if (process.env.SESSION_DATA && !fs.existsSync(credsPath)) {
         console.log(chalk.blue("🔹 SESSION_DATA détectée. Restauration de la session..."));
         try {
-            const credsPath = path.join(AUTH_FOLDER, 'creds.json');
             const sessionBuffer = Buffer.from(process.env.SESSION_DATA, 'base64').toString('utf-8');
-
-            // Validate JSON before writing
             JSON.parse(sessionBuffer);
-
             fs.writeFileSync(credsPath, sessionBuffer);
-            console.log(chalk.green("✅ Session (creds.json) restaurée avec succès depuis l'environnement."));
+            console.log(chalk.green("✅ Session restaurée depuis SESSION_DATA."));
         } catch (e) {
-            console.error(chalk.red("❌ Erreur lors de la restauration SESSION_DATA (vérifiez le format Base64):"), e.message);
+            console.error(chalk.red("❌ SESSION_DATA invalide:"), e.message);
+        }
+    }
+
+    // Priorité 2 : backup local session_backup.txt (si creds.json absent)
+    if (!fs.existsSync(credsPath) && fs.existsSync(backupPath)) {
+        console.log(chalk.blue("🔹 Backup local détecté. Restauration session..."));
+        try {
+            const sessionBuffer = Buffer.from(fs.readFileSync(backupPath, 'utf-8').trim(), 'base64').toString('utf-8');
+            JSON.parse(sessionBuffer);
+            fs.writeFileSync(credsPath, sessionBuffer);
+            console.log(chalk.green("✅ Session restaurée depuis session_backup.txt."));
+        } catch (e) {
+            console.error(chalk.red("❌ Backup invalide:"), e.message);
         }
     }
 
@@ -431,7 +444,9 @@ async function startBot() {
         generateHighQualityLinkPreview: true,
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 0,
-        keepAliveIntervalMs: 30000,
+        keepAliveIntervalMs: 10000,
+        retryRequestDelayMs: 2000,
+        maxMsgRetryCount: 5,
         syncFullHistory: false,
         shouldSyncHistoryMessage: () => false,
         shouldIgnoreJid: (jid) => jid?.includes('@newsletter') || jid === 'status@broadcast'
@@ -439,7 +454,19 @@ async function startBot() {
 
     sock.ev.on("creds.update", async () => {
         await saveCreds();
-        if (sock?.user) await syncSessionToRender();
+        // Sauvegarder session dans backup local (résiste aux redémarrages Render)
+        try {
+            const credsPath = path.join(AUTH_FOLDER, 'creds.json');
+            if (fs.existsSync(credsPath)) {
+                const sessionB64 = Buffer.from(fs.readFileSync(credsPath, 'utf-8')).toString('base64');
+                // Backup fichier local
+                fs.writeFileSync(path.join(__dirname, 'session_backup.txt'), sessionB64);
+                // Sync Render si API key disponible
+                if (sock?.user) await syncSessionToRender();
+            }
+        } catch (e) {
+            console.error('[Session Backup]', e.message);
+        }
     });
 
     let criticalErrorCount = 0;
@@ -500,8 +527,9 @@ async function startBot() {
             } else {
                 reconnectAttempts++;
                 lastConnectedAt = 0;
-                console.log(chalk.yellow(`🔄 Reconnecting (Attempt ${reconnectAttempts})...`));
-                setTimeout(() => startBot(), 5000);
+                const delay = Math.min(3000 * reconnectAttempts, 30000);
+                console.log(chalk.yellow(`🔄 Reconnecting (Attempt ${reconnectAttempts}) in ${delay}ms...`));
+                setTimeout(() => startBot(), delay);
             }
         } else if (connection === "open") {
             latestQR = null;
