@@ -81,10 +81,23 @@ module.exports = {
                 cookieArg = `--cookies "${cookiesPath}"`;
             }
 
-            // Command: Use Android client with fallback to video+convert (verified working)
-            const cmd = `"${ytPath}" -f "bestaudio/best" -x --audio-format m4a --ffmpeg-location "${ffmpegPath}" --extractor-args "youtube:player_client=android" ${cookieArg} -o "${outputTemplate}" "${url}" --no-playlist --no-warnings --no-check-certificate --add-header "referer:youtube.com"`;
+            // Tentative 1 : tv_embedded (contourne bot-check sans cookies)
+            const cmdTv = `"${ytPath}" -f "bestaudio/best" -x --audio-format m4a --ffmpeg-location "${ffmpegPath}" --extractor-args "youtube:player_client=tv_embedded" ${cookieArg} -o "${outputTemplate}" "${url}" --no-playlist --no-warnings --no-check-certificate`;
 
-            await execAsync(cmd, { timeout: 300000 });
+            // Tentative 2 : mweb fallback
+            const cmdMweb = `"${ytPath}" -f "bestaudio/best" -x --audio-format m4a --ffmpeg-location "${ffmpegPath}" --extractor-args "youtube:player_client=mweb" ${cookieArg} -o "${outputTemplate}" "${url}" --no-playlist --no-warnings --no-check-certificate`;
+
+            let downloadOk = false;
+            for (const cmd of [cmdTv, cmdMweb]) {
+                try {
+                    await execAsync(cmd, { timeout: 300000 });
+                    downloadOk = true;
+                    break;
+                } catch (e) {
+                    // essai suivant
+                }
+            }
+            if (!downloadOk) throw new Error("YouTube bloque le telechargement. Mettez a jour cookies.txt sur Render.");
 
             // Find the generated file (could be .m4a)
             const files = fs.readdirSync(tempDir).filter(f => f.startsWith(fileName) && f.endsWith('.m4a'));

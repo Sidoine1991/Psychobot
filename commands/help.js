@@ -18,6 +18,7 @@ module.exports = {
             .sort((a, b) => a.name.localeCompare(b.name));
 
         const categories = {
+            "📈 TRADBOT": ["tradbot"],
             "🤖 AI & DATA": ["ai", "aisay", "llama", "transcript", "translate", "imagine"],
             "💼 K_JOBAGENT": ["careerops", "jobclip"],
             "🛠️ UTILS": ["about", "ping", "sticker", "say", "extract", "audio", "av", "chipmunks", "pp"],
