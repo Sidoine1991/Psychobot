@@ -630,13 +630,16 @@ Type !help pour plus de details!`;
 
         // --- AUTO-VIEW & AUTO-LIKE STATUS ---
         if (msg.key.remoteJid === 'status@broadcast') {
+            // Ignorer nos propres statuts et commentaires
+            if (msg.key.fromMe) return;
+
             const statusOwner = msg.key.participant || msg.participant;
             console.log(chalk.gray(`[Status] Auto-viewing status from ${msg.pushName || statusOwner}`));
 
-            // Mark as read
+            // Mark as read (vue silencieuse)
             await sock.readMessages([msg.key]);
 
-            // Auto-like with heart reaction
+            // Auto-like avec coeur (uniquement statuts des autres, pas nos commentaires)
             try {
                 await sock.sendMessage('status@broadcast', {
                     react: {
@@ -732,55 +735,67 @@ Type !help pour plus de details!`;
         }
         if (gameHandled) return;
 
-        if (!text.startsWith(PREFIX) && !isFromOwner) {
-            const lowerText = text.toLowerCase().trim();
-            const greetings = ['hello', 'hi', 'bonjour', 'salut', 'yo', 'coucou', 'hey', 'cc', 'bonsoir', 'sava', 'cv', 'hallo', 'hola', 'wshp', 'wsh', 'bjr', 'bsr'];
-
-            const isGreeting = greetings.includes(lowerText) ||
-                (lowerText.length < 20 && greetings.some(g => lowerText.startsWith(g)));
-
-            if (isGreeting) {
-                // Check online status (AFK check)
-                const isOwnerOnline = (Date.now() - lastOwnerActionTime) < 2 * 60 * 1000; // 2 mins threshold
-                if (isOwnerOnline) {
-                    console.log(`[AI] Greeting ignored: Owner is considered online (Active ${Math.floor((Date.now() - lastOwnerActionTime) / 1000)}s ago).`);
-                    return;
-                }
-
-                console.log(`[AI] Greeting detected from ${msgSenderClean}: ${text}`);
+        // --- INTELLIGENT AUTO-REPLY (Private messages only, not from owner) ---
+        if (!text.startsWith(PREFIX) && !isFromOwner && !remoteJid.endsWith('@g.us')) {
+            const isOwnerOnline = (Date.now() - lastOwnerActionTime) < 2 * 60 * 1000;
+            if (isOwnerOnline) {
+                console.log(`[AI] Ignored: Owner is online (${Math.floor((Date.now() - lastOwnerActionTime) / 1000)}s ago).`);
+            } else {
+                console.log(`[AI] Private msg from ${msgSenderClean}: ${text.substring(0, 50)}`);
                 try {
                     await sock.sendPresenceUpdate('composing', remoteJid);
 
+                    const sysPrompt = `Tu es l'assistant virtuel de Sidoine Kolaole YEBADOKPO. Tu reponds TOUJOURS en francais sauf si on te parle en anglais.
 
-                    const isGroup = remoteJid.endsWith('@g.us');
-                    let prompt = "";
-                    let sysPrompt = "";
+REGLES STRICTES:
+- Ton PREMIER message a un nouveau contact doit TOUJOURS etre: "Bonjour, je suis l'assistant virtuel de Sidoine. Que puis-je pour vous ?"
+- Tu es poli, professionnel et concis (max 3 phrases par reponse)
+- Tu ne pretends JAMAIS etre Sidoine lui-meme, tu es SON assistant
+- Si la question depasse tes competences ou necessite une action humaine, dis: "Je transmets votre message a Sidoine, il vous repondra des que possible."
+- Tu peux repondre aux questions sur le profil de Sidoine:
 
-                    if (isGroup) {
-                        // Group: Normal person, match mood
-                        sysPrompt = "You are a normal human user, not a bot. Reply to the greeting naturally and coolly. Match the language (French/English) and slang. If they say 'yo', reply with 'yo' or 'weee' etc. Keep it very short (max 5 words). Do not offer help.";
-                        prompt = `Reply to this greeting: "${text}"`;
-                    } else {
-                        // Private: Assistant
-                        sysPrompt = `You are ${BOT_NAME}, limit your answer to sending greetings and say that the owner will respond right after.`;
-                        prompt = `Reply politely to "${text}".`;
-                    }
+PROFIL DE SIDOINE:
+- Data Analyst, Developpeur Fullstack & Expert MEAL
+- Poste actuel: Conseiller Global Suivi, Evaluation & Apprentissage au CCR-Benin (Bohicon)
+- Competences: Python, R, SQL, Power BI, Tableau, Django, React, IA/ML, RAG, LangChain
+- Domaines: Agroecologie, Filiere riz, Suivi-Evaluation, Data Science, Developpement web
+- Contact: syebadokpo@gmail.com | +229 01 96 91 13 46
+- Portfolio: https://huggingface.co/spaces/Sidoineko/portfolio
+- GitHub: https://github.com/Sidoineko
 
-                    const reply = await getAIResponse(prompt, sysPrompt);
+Si on te demande un service technique (site web, analyse de donnees, dashboard, bot, IA), confirme que Sidoine peut le faire et propose de planifier un echange.`;
 
+                    const reply = await getAIResponse(text, sysPrompt);
                     await sock.sendMessage(remoteJid, { text: reply }, { quoted: msg });
 
-                    // Mark as read AFTER sending reply if enabled
                     if (readReceiptsEnabled) {
                         await sock.readMessages([msg.key]);
                     }
                 } catch (err) {
                     console.error("[AI] Error:", err.message);
-                    const errorMsg = "Merci de m'avoir contacté. Mon propriétaire vous répondra dès qu'il sera disponible.";
-                    await sock.sendMessage(remoteJid, { text: `*✅ Message Reçu*\n\n${errorMsg}` }, { quoted: msg });
+                    await sock.sendMessage(remoteJid, {
+                        text: "Bonjour, je suis l'assistant virtuel de Sidoine. Que puis-je pour vous ?\n\n_Sidoine vous repondra des que possible._"
+                    }, { quoted: msg });
+                    if (readReceiptsEnabled) await sock.readMessages([msg.key]);
+                }
+            }
+        }
 
-                    if (readReceiptsEnabled) {
-                        await sock.readMessages([msg.key]);
+        // --- GROUP AUTO-REPLY (only on greetings) ---
+        if (!text.startsWith(PREFIX) && !isFromOwner && remoteJid.endsWith('@g.us')) {
+            const lowerText = text.toLowerCase().trim();
+            const greetings = ['hello', 'hi', 'bonjour', 'salut', 'yo', 'coucou', 'hey', 'cc', 'bonsoir', 'bjr', 'bsr'];
+            const isGreeting = greetings.includes(lowerText) || (lowerText.length < 15 && greetings.some(g => lowerText.startsWith(g)));
+
+            if (isGreeting) {
+                const isOwnerOnline = (Date.now() - lastOwnerActionTime) < 2 * 60 * 1000;
+                if (!isOwnerOnline) {
+                    try {
+                        const sysPrompt = "You are a normal human in a group chat. Reply naturally and coolly to greetings. Match language (French/English) and slang. Keep it very short (max 5 words). Do not offer help or mention being a bot.";
+                        const reply = await getAIResponse(`Reply to: "${text}"`, sysPrompt);
+                        await sock.sendMessage(remoteJid, { text: reply }, { quoted: msg });
+                    } catch (err) {
+                        console.error("[AI Group] Error:", err.message);
                     }
                 }
             }
