@@ -1,29 +1,36 @@
-const Groq = require("groq-sdk");
+const axios = require('axios');
 require('dotenv').config();
 
-const GROQ_FALLBACK = String.fromCharCode(103, 115, 107, 95) + "d5jf754z87slN37" + "D332bWGdyb3FYjoQbx" + "MgFsZ8TsxkrP6DlDZCp";
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY || GROQ_FALLBACK });
+const NVIDIA_NIM_API_KEY = process.env.NVIDIA_NIM_API_KEY || "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";
+const NVIDIA_NIM_BASE = "https://integrate.api.nvidia.com/v1";
+const NVIDIA_NIM_MODEL = process.env.NVIDIA_NIM_MODEL || "meta/llama-3.3-70b-instruct";
 
 async function getAIResponse(prompt) {
     if (!prompt || typeof prompt !== 'string') return "Invalid prompt.";
 
     try {
-        const chatCompletion = await groq.chat.completions.create({
-            "messages": [
-                { "role": "system", "content": "You are a helpful assistant." },
-                { "role": "user", "content": prompt }
+        const resp = await axios.post(`${NVIDIA_NIM_BASE}/chat/completions`, {
+            model: NVIDIA_NIM_MODEL,
+            messages: [
+                { role: "system", content: "You are a helpful assistant." },
+                { role: "user", content: prompt }
             ],
-            "model": "llama-3.3-70b-versatile",
-            "temperature": 0.7,
-            "max_tokens": 1024,
-            "top_p": 1,
-            "stream": false
+            temperature: 0.7,
+            max_tokens: 1024,
+            top_p: 1,
+            stream: false
+        }, {
+            headers: {
+                "Authorization": `Bearer ${NVIDIA_NIM_API_KEY}`,
+                "Content-Type": "application/json"
+            },
+            timeout: 30000
         });
 
-        return chatCompletion.choices[0].message.content.trim();
+        return resp.data.choices[0].message.content.trim();
     } catch (error) {
-        console.error('[Groq Error]:', error.message);
-        if (error.status === 429) return "⏳ Too many requests. Please try again later.";
+        console.error('[NVIDIA NIM Error]:', error.response?.status, error.message);
+        if (error.response?.status === 429) return "⏳ Too many requests. Please try again later.";
         return "Sorry, I encountered an error connecting to the AI.";
     }
 }

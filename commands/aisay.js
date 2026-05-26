@@ -1,37 +1,44 @@
-const Groq = require("groq-sdk");
+const axios = require('axios');
 const { convertToOpus } = require('../src/lib/audioHelper');
 const fs = require('fs');
 require('dotenv').config();
 
-const GROQ_FALLBACK = String.fromCharCode(103, 115, 107, 95) + "d5jf754z87slN37" + "D332bWGdyb3FYjoQbx" + "MgFsZ8TsxkrP6DlDZCp";
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY || GROQ_FALLBACK });
+const NVIDIA_NIM_API_KEY = process.env.NVIDIA_NIM_API_KEY || "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";
+const NVIDIA_NIM_BASE = "https://integrate.api.nvidia.com/v1";
+const NVIDIA_NIM_MODEL = process.env.NVIDIA_NIM_MODEL || "meta/llama-3.3-70b-instruct";
 
 async function getAIResponse(prompt) {
     if (!prompt || typeof prompt !== 'string') return "Invalid.";
 
     try {
-        const chatCompletion = await groq.chat.completions.create({
-            "messages": [
-                { "role": "system", "content": "You are a helpful assistant. Keep your answer concise (max 500 chars)." },
-                { "role": "user", "content": prompt }
+        const resp = await axios.post(`${NVIDIA_NIM_BASE}/chat/completions`, {
+            model: NVIDIA_NIM_MODEL,
+            messages: [
+                { role: "system", content: "You are a helpful assistant. Keep your answer concise (max 500 chars)." },
+                { role: "user", content: prompt }
             ],
-            "model": "llama-3.3-70b-versatile",
-            "temperature": 0.7,
-            "max_tokens": 512,
-            "top_p": 1,
-            "stream": false
+            temperature: 0.7,
+            max_tokens: 512,
+            top_p: 1,
+            stream: false
+        }, {
+            headers: {
+                "Authorization": `Bearer ${NVIDIA_NIM_API_KEY}`,
+                "Content-Type": "application/json"
+            },
+            timeout: 30000
         });
 
-        return chatCompletion.choices[0].message.content.trim();
+        return resp.data.choices[0].message.content.trim();
     } catch (error) {
-        console.error('[Groq Error]:', error.message);
+        console.error('[NVIDIA NIM Error]:', error.response?.status, error.message);
         return "I'm sorry, I can't generate a voice response right now.";
     }
 }
 
 module.exports = {
     name: "aisay",
-    description: "L'IA vous répond par message vocal.",
+    description: "L'IA vous repond par message vocal.",
     run: async ({ sock, msg, args, replyWithTag }) => {
         const question = args.join(" ");
         if (!question) return replyWithTag(sock, msg.key.remoteJid, msg, "❌ Veuillez poser une question.");
@@ -59,20 +66,18 @@ module.exports = {
 
         } catch (error) {
             console.error(error);
-            await replyWithTag(sock, msg.key.remoteJid, msg, "❌ Impossible de générer la voix.");
+            await replyWithTag(sock, msg.key.remoteJid, msg, "❌ Impossible de generer la voix.");
         }
     },
     onMessage: async (sock, msg, text) => {
         const lowerText = text.toLowerCase().trim();
         const triggers = ["ai", "psychobot", "psycho bot"];
 
-        // Check if text strictly starts with triggers as whole words
         const hasTrigger = triggers.some(t => lowerText === t || lowerText.startsWith(t + " "));
 
-        // Check if message is from owner
         const isFromOwner = msg.key.fromMe || (process.env.OWNER_NUMBER && process.env.OWNER_NUMBER.includes(msg.key.participant?.split('@')[0]));
 
-        if (isFromOwner) return false; // Owner ignores passive triggers
+        if (isFromOwner) return false;
 
         if (hasTrigger) {
             console.log(`[AiSay] Triggered by keyword: ${lowerText}`);
@@ -80,7 +85,6 @@ module.exports = {
             const prompt = text;
 
             try {
-                // Helper to generate and send
                 const generateAndSend = async () => {
                     const { convertToOpus } = require('../src/lib/audioHelper');
                     const fs = require('fs');
