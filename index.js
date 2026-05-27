@@ -21,35 +21,49 @@ const { convertToOpus } = require('./src/lib/audioHelper');
 const NVIDIA_NIM_API_KEY = process.env.NVIDIA_NIM_API_KEY || "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";
 const NVIDIA_NIM_BASE = "https://integrate.api.nvidia.com/v1";
 const NVIDIA_NIM_MODEL = process.env.NVIDIA_NIM_MODEL || "meta/llama-3.3-70b-instruct";
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "";
+const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
+const OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct:free";
+
+async function callLLM(baseUrl, apiKey, model, messages, maxTokens = 1024) {
+    const resp = await axios.post(`${baseUrl}/chat/completions`, {
+        model,
+        messages,
+        temperature: 0.7,
+        max_tokens: maxTokens,
+        stream: false
+    }, {
+        headers: {
+            "Authorization": `Bearer ${apiKey}`,
+            "Content-Type": "application/json"
+        },
+        timeout: 45000
+    });
+    return resp.data.choices[0].message.content.trim();
+}
 
 async function getAIResponse(prompt, systemPrompt = null) {
-    if (!NVIDIA_NIM_API_KEY) return "❌ Erreur config: Clé API NVIDIA manquante.";
     if (!prompt || typeof prompt !== 'string') return "Please provide a valid prompt.";
 
-    try {
-        const resp = await axios.post(`${NVIDIA_NIM_BASE}/chat/completions`, {
-            model: NVIDIA_NIM_MODEL,
-            messages: [
-                { role: "system", content: systemPrompt || "You are a helpful assistant." },
-                { role: "user", content: prompt }
-            ],
-            temperature: 0.7,
-            max_tokens: 1024,
-            top_p: 1,
-            stream: false
-        }, {
-            headers: {
-                "Authorization": `Bearer ${NVIDIA_NIM_API_KEY}`,
-                "Content-Type": "application/json"
-            },
-            timeout: 30000
-        });
+    const messages = [
+        { role: "system", content: systemPrompt || "You are a helpful assistant." },
+        { role: "user", content: prompt }
+    ];
 
-        return resp.data.choices[0].message.content.trim();
-    } catch (error) {
-        console.error('[NVIDIA NIM Error]:', error.response?.status, error.message);
-        if (error.response?.status === 429) return "⏳ Too many requests. Please try again later.";
-        return "Sorry, I'm having trouble connecting to the AI right now.";
+    // Try NVIDIA NIM first, fallback to OpenRouter if configured
+    try {
+        return await callLLM(NVIDIA_NIM_BASE, NVIDIA_NIM_API_KEY, NVIDIA_NIM_MODEL, messages);
+    } catch (err1) {
+        console.error('[NVIDIA NIM Error]:', err1.response?.status, err1.message);
+        if (OPENROUTER_API_KEY) {
+            try {
+                console.log('[AI] Fallback to OpenRouter...');
+                return await callLLM(OPENROUTER_BASE, OPENROUTER_API_KEY, OPENROUTER_MODEL, messages);
+            } catch (err2) {
+                console.error('[OpenRouter Error]:', err2.response?.status, err2.message);
+            }
+        }
+        return "Merci pour votre message. Sidoine vous repondra des que possible.";
     }
 }
 
