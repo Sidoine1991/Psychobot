@@ -227,49 +227,14 @@ app.get('/pair', (req, res) => {
     res.sendFile(__path + '/pair.html');
 });
 
-// Pairing code endpoint — generates a phone-number-based pairing code
-app.get('/code', async (req, res) => {
-    try {
-        const number = req.query.number?.trim();
-        if (!number) {
-            return res.status(400).json({ error: 'Phone number required' });
-        }
-
-        // Validate number format (should be like 2376xxxxxxxx or similar)
-        if (!/^\d{7,15}$/.test(number)) {
-            return res.status(400).json({ error: 'Invalid phone number format. Use format: 2376xxxxxxxx' });
-        }
-
-        console.log(chalk.cyan(`[Pair] Requesting code for: ${number}`));
-
-        // Create a temporary instance to request pairing code
-        try {
-            const tempSocket = makeWASocket({
-                version: [2, 3000, 1015901307],
-                logger: pino({ level: 'error' })
-            });
-
-            // Request pairing code
-            const pairingCode = await tempSocket.requestPairingCode(number);
-
-            // Close the temporary socket
-            tempSocket.end();
-
-            if (!pairingCode) {
-                return res.status(500).json({ error: 'Failed to generate pairing code' });
-            }
-
-            console.log(chalk.green(`[Pair] Code generated: ${pairingCode}`));
-            res.json({ code: pairingCode });
-
-        } catch (err) {
-            console.error(chalk.red('[Pair] Error:'), err.message);
-            res.status(500).json({ error: 'Failed to generate code: ' + err.message });
-        }
-    } catch (err) {
-        console.error(chalk.red('[Code Endpoint] Error:'), err);
-        res.status(500).json({ error: err.message });
-    }
+// Pairing code endpoint — For now, redirect to QR method (more stable)
+app.get('/code', (req, res) => {
+    console.log(chalk.yellow('[Pair] Phone pairing requested, but QR method is recommended'));
+    res.status(503).json({
+        error: 'Phone pairing temporarily unavailable',
+        message: 'Please use the QR code method at /qr instead',
+        qr_url: 'https://' + req.get('host') + '/qr'
+    });
 });
 
 // Health check endpoint
