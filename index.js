@@ -25,6 +25,8 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "";
 const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 const OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct:free";
 
+let lastOwnerActionTime = Date.now();
+
 async function callLLM(baseUrl, apiKey, model, messages, maxTokens = 1024) {
     const resp = await axios.post(`${baseUrl}/chat/completions`, {
         model,
