@@ -400,6 +400,18 @@ async function startBot() {
 
     // --- SESSION_DATA Support (for Permanent Render Connection) ---
     const credsPath = path.join(AUTH_FOLDER, 'creds.json');
+
+    // Safety: If creds.json exists but is invalid/corrupted, delete it
+    if (fs.existsSync(credsPath)) {
+        try {
+            JSON.parse(fs.readFileSync(credsPath, 'utf-8'));
+            console.log(chalk.green("✅ Session file is valid."));
+        } catch (e) {
+            console.error(chalk.red("❌ Corrupted creds.json detected:"), e.message);
+            fs.unlinkSync(credsPath);
+            console.log(chalk.yellow("⚠️ Deleted corrupted session. New QR will be generated."));
+        }
+    }
     const backupPath = path.join(__dirname, 'session_backup.txt');
 
     // Priorité 1 : SESSION_DATA env var (configuré manuellement sur Render)
