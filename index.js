@@ -380,6 +380,7 @@ async function startBot() {
     if (isStarting) return;
     isStarting = true;
 
+    console.log(chalk.cyan('=== STARTBOT CALLED ==='));
     header();
     broadcast({ type: 'status', message: 'Starting Bot...' });
 
@@ -440,7 +441,9 @@ async function startBot() {
         }
     }
 
+    console.log(chalk.cyan('[LOG] Loading auth state...'));
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
+    console.log(chalk.cyan('[LOG] Auth state loaded'));
     const logger = pino({ level: 'info' });
 
     console.log(chalk.gray("🌐 Récupération de la version WhatsApp Web..."));
@@ -460,6 +463,7 @@ async function startBot() {
 
     console.log(chalk.gray(`📦 Version Baileys: ${version}`));
 
+    console.log(chalk.cyan('[LOG] Creating WASocket...'));
     sock = makeWASocket({
         version,
         auth: {
@@ -480,6 +484,7 @@ async function startBot() {
         shouldSyncHistoryMessage: () => false,
         shouldIgnoreJid: (jid) => jid?.includes('@newsletter') || jid === 'status@broadcast'
     });
+    console.log(chalk.cyan('[LOG] WASocket created'));
 
     sock.ev.on("creds.update", async () => {
         await saveCreds();
