@@ -572,8 +572,8 @@ async function startBot() {
             broadcast({ type: 'status', message: `Disconnected: ${reason || 'Error'}` });
             isStarting = false;
 
-            if (reason === DisconnectReason.loggedOut) {
-                console.log(chalk.red("🛑 Logged Out. Clearing session."));
+            if (reason === DisconnectReason.loggedOut || reason === 401) {
+                console.log(chalk.red("🛑 Logged Out (401 Unauthorized). Clearing session."));
                 fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
                 process.exit(0);
             } else if (reason === DisconnectReason.connectionReplaced || reason === 440 || reason === 405) {
