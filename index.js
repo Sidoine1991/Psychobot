@@ -402,7 +402,7 @@ async function startBot() {
     if (isStarting) return;
     isStarting = true;
 
-    console.log(chalk.cyan('=== STARTBOT CALLED ==='));
+    console.log(chalk.cyan('=== STARTBOT CALLED [v2] ==='));
     header();
     broadcast({ type: 'status', message: 'Starting Bot...' });
 
