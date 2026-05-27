@@ -41,17 +41,21 @@ async function getAIResponse(prompt, contactName = null, conversationHistory = [
             max_tokens: 1024
         };
 
+        console.log(`[AI Service] Calling NVIDIA API with ${messages.length} messages...`);
+
         const response = await fetch(`${NVIDIA_API_URL}/chat/completions`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${NVIDIA_API_KEY}`,
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
+            timeout: 10000
         });
 
         if (!response.ok) {
-            throw new Error(`NVIDIA API error: ${response.status} ${response.statusText}`);
+            const errorText = await response.text();
+            throw new Error(`NVIDIA API error: ${response.status} - ${errorText.substring(0, 100)}`);
         }
 
         const data = await response.json();
@@ -71,11 +75,23 @@ async function getAIResponse(prompt, contactName = null, conversationHistory = [
             }
         }
 
+        console.log(`[AI Service] ✅ Got response from NVIDIA: ${aiResponse.substring(0, 50)}...`);
         return aiResponse;
 
     } catch (error) {
-        console.error('[AI Service] Error:', error.message);
-        return `Désolé, je n'ai pas pu traiter votre message. Erreur: ${error.message}`;
+        console.error('[AI Service] ❌ Error:', error.message);
+
+        // Fallback response if API fails
+        const fallbackResponses = [
+            'Salut! Je suis en train de réfléchir à ta question... 🤔',
+            'Merci pour ton message! Je suis occupé mais je reviens vite! 💫',
+            'Coucou! Sidoine t\'a mis un assistant. On peut discuter! 🤖',
+            'Bonjour! Je suis le bot de Sidoine. Comment je peux t\'aider? 👋'
+        ];
+
+        const randomFallback = fallbackResponses[Math.floor(Math.random() * fallbackResponses.length)];
+        console.log(`[AI Service] Using fallback response: ${randomFallback}`);
+        return randomFallback;
     }
 }
 
