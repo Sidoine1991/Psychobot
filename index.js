@@ -229,11 +229,11 @@ app.get('/pair', (req, res) => {
 
 // Pairing code endpoint — For now, redirect to QR method (more stable)
 app.get('/code', (req, res) => {
-    console.log(chalk.yellow('[Pair] Phone pairing requested, but QR method is recommended'));
-    res.status(503).json({
-        error: 'Phone pairing temporarily unavailable',
-        message: 'Please use the QR code method at /qr instead',
-        qr_url: 'https://' + req.get('host') + '/qr'
+    console.log(chalk.yellow('[Pair] Phone pairing requested - use /qr instead'));
+    return res.status(400).json({
+        error: 'Phone number pairing not yet implemented',
+        solution: 'Please use QR code method',
+        redirect: '/qr'
     });
 });
 
