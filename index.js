@@ -574,8 +574,16 @@ async function startBot() {
 
             if (reason === DisconnectReason.loggedOut || reason === 401) {
                 console.log(chalk.red("🛑 Logged Out (401 Unauthorized). Clearing session."));
-                fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
-                process.exit(0);
+                try {
+                    fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
+                    console.log(chalk.green("✅ Session cleared. Waiting for reconnect..."));
+                } catch (e) {
+                    console.error(chalk.red("❌ Failed to clear session:"), e.message);
+                }
+                // Don't exit, let reconnect handler try again
+                isStarting = false;
+                reconnectAttempts = 0; // Reset counter for fresh attempt
+                setTimeout(() => startBot(), 5000);
             } else if (reason === DisconnectReason.connectionReplaced || reason === 440 || reason === 405) {
                 console.log(chalk.red("⚠️ Session Conflict. Restarting..."));
                 sock.end();
