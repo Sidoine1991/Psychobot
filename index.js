@@ -820,10 +820,13 @@ Type !help pour plus de details!`;
         if (gameHandled) return;
 
         // --- INTELLIGENT AUTO-REPLY (Private messages only, not from owner) ---
+        console.log(`[MSG] Checking auto-reply: text="${text.substring(0, 30)}" | PREFIX=${PREFIX} | fromOwner=${isFromOwner} | isGroup=${remoteJid.endsWith('@g.us')}`);
         if (!text.startsWith(PREFIX) && !isFromOwner && !remoteJid.endsWith('@g.us')) {
             const isOwnerOnline = (Date.now() - lastOwnerActionTime) < 2 * 60 * 1000;
+            const timeSinceLastAction = Math.floor((Date.now() - lastOwnerActionTime) / 1000);
+            console.log(`[AI] Owner online check: ${isOwnerOnline} (${timeSinceLastAction}s since last action)`);
             if (isOwnerOnline) {
-                console.log(`[AI] Ignored: Owner is online (${Math.floor((Date.now() - lastOwnerActionTime) / 1000)}s ago).`);
+                console.log(`[AI] Ignored: Owner is online (${timeSinceLastAction}s ago).`);
             } else {
                 console.log(`[AI] Private msg from ${msgSenderClean}: ${text.substring(0, 50)}`);
                 try {
