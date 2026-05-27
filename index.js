@@ -1099,7 +1099,20 @@ cron.schedule('*/5 * * * *', async () => {
 loadCommands();
 server.listen(PORT, () => {
     console.log(chalk.blue(`[Server] Port ${PORT} lié.`));
-    startBot();
+    startBot().catch(err => {
+        console.error(chalk.red('[FATAL] startBot error:'), err);
+        notifyOwner(`❌ Bot crashed at startup: ${err.message}`);
+    });
+});
+
+process.on('uncaughtException', (err) => {
+    console.error(chalk.red('[UNCAUGHT EXCEPTION]'), err);
+    notifyOwner(`❌ Uncaught Exception: ${err.message}`);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error(chalk.red('[UNHANDLED REJECTION]'), reason);
+    notifyOwner(`❌ Unhandled Rejection: ${String(reason)}`);
 });
 
 process.on('SIGTERM', async () => {
