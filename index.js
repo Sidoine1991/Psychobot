@@ -237,6 +237,44 @@ app.get('/code', (req, res) => {
     });
 });
 
+// Force new QR code endpoint — disconnect and regenerate QR
+app.get('/new-qr', (req, res) => {
+    try {
+        console.log(chalk.red('[NewQR] Forcing new QR code...'));
+
+        // End socket connection
+        if (sock) {
+            sock.end();
+        }
+
+        // Clear session folder
+        try {
+            fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
+            console.log(chalk.green('[NewQR] Session cleared'));
+        } catch (e) {
+            console.error('[NewQR] Failed to clear session:', e.message);
+        }
+
+        res.json({
+            success: true,
+            message: 'Session cleared. New QR will be generated in 3 seconds.',
+            check_qr_at: '/qr'
+        });
+
+        // Restart bot after 3s without stabilisation delay
+        setTimeout(() => {
+            console.log(chalk.yellow('[NewQR] Restarting bot for new QR...'));
+            isStarting = false;
+            reconnectAttempts = 1; // Skip stabilisation delay
+            startBot().catch(err => console.error('[NewQR Restart Error]:', err));
+        }, 3000);
+
+    } catch (err) {
+        console.error('[NewQR] Error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Logout endpoint — disconnect and force new QR
 app.get('/logout', (req, res) => {
     try {
