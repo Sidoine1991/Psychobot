@@ -780,15 +780,24 @@ PROFIL DE SIDOINE:
 Si on te demande un service technique (site web, analyse de donnees, dashboard, bot, IA), confirme que Sidoine peut le faire et propose de planifier un echange.`;
 
                     const reply = await getAIResponse(text, sysPrompt);
-                    await sock.sendMessage(remoteJid, { text: reply }, { quoted: msg });
+                    const formattedReply = `🤖 *Assistant Personnel*\n\n${reply}`;
+                    await sock.sendMessage(remoteJid, { text: formattedReply }, { quoted: msg });
 
                     if (readReceiptsEnabled) {
                         await sock.readMessages([msg.key]);
                     }
                 } catch (err) {
                     console.error("[AI] Error:", err.message);
+                    const fallbackResponses = [
+                        '🤖 *Assistant Personnel*\n\nBonjour! Je suis en train de réfléchir à ta question... 🤔',
+                        '🤖 *Assistant Personnel*\n\nMerci pour ton message! Je suis occupé mais je reviens vite! 💫',
+                        '🤖 *Assistant Personnel*\n\nCoucou! Sidoine t\'a mis un assistant. On peut discuter! 🤖',
+                        '🤖 *Assistant Personnel*\n\nBonjour! Je suis le bot de Sidoine. Comment je peux t\'aider? 👋'
+                    ];
+                    const fallback = fallbackResponses[Math.floor(Math.random() * fallbackResponses.length)];
+
                     await sock.sendMessage(remoteJid, {
-                        text: "Bonjour, je suis l'assistant virtuel de Sidoine. Que puis-je pour vous ?\n\n_Sidoine vous repondra des que possible._"
+                        text: fallback
                     }, { quoted: msg });
                     if (readReceiptsEnabled) await sock.readMessages([msg.key]);
                 }
