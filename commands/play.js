@@ -20,48 +20,46 @@ module.exports = {
         const tempDir = os.tmpdir();
 
         try {
-            await replyWithTag(sock, from, msg, `🔎 Recherche de "${query}"...`);
-
             const searchResult = await ytSearch(query);
             const video = searchResult.videos.length > 0 ? searchResult.videos[0] : null;
             if (!video) return replyWithTag(sock, from, msg, "❌ Aucun resultat trouve.");
 
-            const { title, timestamp, url } = video;
-
-            await sock.sendMessage(from, {
-                text: `🎵 *${title}*\n⏱️ ${timestamp}\n🔗 ${url}`
-            }, { quoted: msg });
+            const { title, timestamp, url, videoId } = video;
 
             await sock.sendPresenceUpdate('composing', from);
 
-            // Method 1: Cobalt API (reliable, no bot-check)
+            // Try download via yt-dlp
             let audioBuffer = null;
             try {
-                audioBuffer = await downloadViaCobalt(url);
+                audioBuffer = await downloadViaYtDlp(url, tempDir);
             } catch (e) {
-                console.log('[Play] Cobalt failed:', e.message);
+                console.log('[Play] yt-dlp failed:', e.message);
             }
 
-            // Method 2: yt-dlp local fallback
-            if (!audioBuffer) {
+            if (audioBuffer) {
+                await sock.sendMessage(from, {
+                    audio: audioBuffer,
+                    mimetype: 'audio/mp4',
+                    fileName: title + '.m4a',
+                    ptt: false
+                }, { quoted: msg });
+            } else {
+                // Fallback: send link with thumbnail
+                const thumb = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+                let imgBuffer = null;
                 try {
-                    audioBuffer = await downloadViaYtDlp(url, tempDir);
-                } catch (e) {
-                    console.log('[Play] yt-dlp failed:', e.message);
+                    const imgResp = await axios.get(thumb, { responseType: 'arraybuffer', timeout: 10000 });
+                    imgBuffer = Buffer.from(imgResp.data);
+                } catch (e) {}
+
+                const text = `🎵 *${title}*\n⏱️ Duree: ${timestamp}\n\n▶️ ${url}\n\n_Telechargement direct indisponible (YouTube bloque les serveurs cloud). Cliquez le lien pour ecouter._`;
+
+                if (imgBuffer) {
+                    await sock.sendMessage(from, { image: imgBuffer, caption: text }, { quoted: msg });
+                } else {
+                    await sock.sendMessage(from, { text }, { quoted: msg });
                 }
             }
-
-            if (!audioBuffer) {
-                return replyWithTag(sock, from, msg, "❌ Impossible de telecharger. YouTube bloque les serveurs cloud. Reessayez plus tard.");
-            }
-
-            // Send audio
-            await sock.sendMessage(from, {
-                audio: audioBuffer,
-                mimetype: 'audio/mp4',
-                fileName: title + '.m4a',
-                ptt: false
-            }, { quoted: msg });
 
         } catch (err) {
             console.error('[Play Error]:', err.message);
@@ -69,35 +67,6 @@ module.exports = {
         }
     }
 };
-
-async function downloadViaCobalt(videoUrl) {
-    const resp = await axios.post('https://api.cobalt.tools/api/json', {
-        url: videoUrl,
-        aFormat: "mp3",
-        filenamePattern: "basic",
-        isAudioOnly: true
-    }, {
-        headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-        },
-        timeout: 30000
-    });
-
-    if (resp.data.status === 'stream' || resp.data.status === 'redirect') {
-        const dlUrl = resp.data.url;
-        const audioResp = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 120000 });
-        return Buffer.from(audioResp.data);
-    }
-
-    if (resp.data.status === 'picker' && resp.data.audio) {
-        const dlUrl = resp.data.audio;
-        const audioResp = await axios.get(dlUrl, { responseType: 'arraybuffer', timeout: 120000 });
-        return Buffer.from(audioResp.data);
-    }
-
-    throw new Error('Cobalt: format non supporte - ' + resp.data.status);
-}
 
 async function downloadViaYtDlp(videoUrl, tempDir) {
     const binDir = path.join(tempDir, 'bin');
@@ -129,7 +98,7 @@ async function downloadViaYtDlp(videoUrl, tempDir) {
     for (const client of clients) {
         try {
             const cmd = `"${ytDlpPath}" -f "bestaudio[ext=m4a]/bestaudio/best" -x --audio-format m4a --ffmpeg-location "${ffmpegPath}" --extractor-args "youtube:player_client=${client}" ${cookieArg} -o "${outputTemplate}" "${videoUrl}" --no-playlist --no-warnings --no-check-certificate --socket-timeout 30`;
-            await execAsync(cmd, { timeout: 120000 });
+            await execAsync(cmd, { timeout: 60000 });
 
             const files = fs.readdirSync(tempDir).filter(f => f.startsWith(fileName) && (f.endsWith('.m4a') || f.endsWith('.mp3') || f.endsWith('.opus')));
             if (files.length > 0) {
@@ -139,9 +108,8 @@ async function downloadViaYtDlp(videoUrl, tempDir) {
                 return buffer;
             }
         } catch (e) {
-            // try next client
+            // next client
         }
     }
-
-    throw new Error('yt-dlp: tous les clients bloques');
+    throw new Error('tous les clients bloques');
 }
