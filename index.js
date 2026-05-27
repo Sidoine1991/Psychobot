@@ -237,6 +237,47 @@ app.get('/code', (req, res) => {
     });
 });
 
+// Logout endpoint — disconnect and force new QR
+app.get('/logout', (req, res) => {
+    try {
+        console.log(chalk.red('[Logout] Disconnecting bot...'));
+
+        // End socket connection
+        if (sock) {
+            sock.end();
+        }
+
+        // Clear session folder
+        try {
+            fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
+            console.log(chalk.green('[Logout] Session cleared'));
+        } catch (e) {
+            console.error('[Logout] Failed to clear session:', e.message);
+        }
+
+        // Set flag to skip SESSION_DATA on next boot
+        fs.writeFileSync(path.join(__dirname, '.skip-session-data'), 'true');
+
+        res.json({
+            success: true,
+            message: 'Bot disconnected. Restarting...',
+            qr_url: '/qr'
+        });
+
+        // Restart bot after 2s
+        setTimeout(() => {
+            console.log(chalk.yellow('[Logout] Restarting bot...'));
+            isStarting = false;
+            reconnectAttempts = 1; // Set to 1 to skip stabilisation delay
+            startBot().catch(err => console.error('[Logout Restart Error]:', err));
+        }, 2000);
+
+    } catch (err) {
+        console.error('[Logout] Error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => res.status(200).send('OK'));
 app.get('/ping', (req, res) => res.status(200).json({
