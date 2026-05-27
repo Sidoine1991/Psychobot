@@ -208,7 +208,19 @@ app.get('/', (req, res) => {
 });
 
 app.get('/qr', (req, res) => {
-    res.sendFile(__path + '/qr.html');
+    console.log(chalk.cyan('[QR] Request received. Path:', __path + '/qr.html'));
+    const filePath = __path + '/qr.html';
+    if (!fs.existsSync(filePath)) {
+        console.error(chalk.red('[QR] File not found:', filePath));
+        return res.status(404).send('qr.html not found');
+    }
+    res.sendFile(filePath, (err) => {
+        if (err) {
+            console.error(chalk.red('[QR] sendFile error:'), err.message);
+        } else {
+            console.log(chalk.green('[QR] File sent successfully'));
+        }
+    });
 });
 
 app.get('/pair', (req, res) => {
