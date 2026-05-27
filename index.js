@@ -604,7 +604,8 @@ async function startBot() {
                 }
                 // Don't exit, let reconnect handler try again
                 isStarting = false;
-                reconnectAttempts = 0; // Reset counter for fresh attempt
+                // DON'T reset reconnectAttempts - this prevents re-triggering RENDER_STABILISATION
+                reconnectAttempts++; // Mark as attempted retry
                 setTimeout(() => startBot(), 5000);
             } else if (reason === DisconnectReason.connectionReplaced || reason === 440 || reason === 405) {
                 console.log(chalk.red("⚠️ Session Conflict. Restarting..."));
