@@ -403,6 +403,25 @@ async function startBot() {
     isStarting = true;
 
     console.log(chalk.cyan('=== STARTBOT CALLED [v2] ==='));
+
+    // Check if we should skip SESSION_DATA (flag set after 401 error)
+    const skipSessionDataFlag = path.join(__dirname, '.skip-session-data');
+    let skipSessionData = false;
+    if (fs.existsSync(skipSessionDataFlag)) {
+        skipSessionData = true;
+        console.log(chalk.yellow('⚠️ SKIP_SESSION_DATA flag detected. Forcing fresh QR.'));
+        fs.unlinkSync(skipSessionDataFlag);
+    }
+
+    // If flag was set, also clear AUTH_FOLDER to be safe
+    if (skipSessionData && fs.existsSync(AUTH_FOLDER)) {
+        try {
+            fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
+        } catch (e) {
+            console.error('Failed to clear AUTH_FOLDER:', e.message);
+        }
+    }
+
     header();
     broadcast({ type: 'status', message: 'Starting Bot...' });
 
@@ -438,7 +457,8 @@ async function startBot() {
     const backupPath = path.join(__dirname, 'session_backup.txt');
 
     // Priorité 1 : SESSION_DATA env var (configuré manuellement sur Render)
-    if (process.env.SESSION_DATA && !fs.existsSync(credsPath)) {
+    // BUT: Skip if SKIP_SESSION_DATA is set (happens after 401 error to force fresh QR)
+    if (process.env.SESSION_DATA && !fs.existsSync(credsPath) && !process.env.SKIP_SESSION_DATA) {
         console.log(chalk.blue("🔹 SESSION_DATA détectée. Restauration de la session..."));
         try {
             const sessionBuffer = Buffer.from(process.env.SESSION_DATA, 'base64').toString('utf-8');
@@ -576,7 +596,9 @@ async function startBot() {
                 console.log(chalk.red("🛑 Logged Out (401 Unauthorized). Clearing session."));
                 try {
                     fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
-                    console.log(chalk.green("✅ Session cleared. Waiting for reconnect..."));
+                    // Write a flag file to skip SESSION_DATA reload on next startup
+                    fs.writeFileSync(path.join(__dirname, '.skip-session-data'), 'true');
+                    console.log(chalk.green("✅ Session cleared. Skipping SESSION_DATA on next boot."));
                 } catch (e) {
                     console.error(chalk.red("❌ Failed to clear session:"), e.message);
                 }
