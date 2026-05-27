@@ -3,7 +3,7 @@ const { convertToOpus } = require('../src/lib/audioHelper');
 const fs = require('fs');
 require('dotenv').config();
 
-const NVIDIA_NIM_API_KEY = process.env.NVIDIA_NIM_API_KEY || "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";
+const NVIDIA_NIM_API_KEY = process.env.NVIDIA_NIM_API_KEY || "";
 const NVIDIA_NIM_BASE = "https://integrate.api.nvidia.com/v1";
 const NVIDIA_NIM_MODEL = process.env.NVIDIA_NIM_MODEL || "meta/llama-3.3-70b-instruct";
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "";
