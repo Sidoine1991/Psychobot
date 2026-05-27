@@ -21,7 +21,14 @@ module.exports = {
 
         try {
             const searchResult = await ytSearch(query);
-            const video = searchResult.videos.length > 0 ? searchResult.videos[0] : null;
+            // Filtrer: exclure les videos "Topic" (souvent geo-restreintes) et trop courtes
+            const candidates = searchResult.videos.filter(v => {
+                const authorLower = (v.author?.name || '').toLowerCase();
+                const isTopicChannel = authorLower.includes('- topic') || authorLower.endsWith('topic');
+                const tooShort = v.seconds < 30;
+                return !isTopicChannel && !tooShort;
+            });
+            const video = candidates.length > 0 ? candidates[0] : (searchResult.videos[0] || null);
             if (!video) return replyWithTag(sock, from, msg, "❌ Aucun resultat trouve.");
 
             const { title, timestamp, url, videoId } = video;
