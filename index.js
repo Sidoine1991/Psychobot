@@ -913,28 +913,14 @@ Type !help pour plus de details!`;
                 try {
                     await sock.sendPresenceUpdate('composing', remoteJid);
 
-                    const sysPrompt = `Tu es l'assistant virtuel de Sidoine Kolaole YEBADOKPO. Tu reponds TOUJOURS en francais sauf si on te parle en anglais.
-
-REGLES STRICTES:
-- Ton PREMIER message a un nouveau contact doit TOUJOURS etre: "Bonjour, je suis l'assistant virtuel de Sidoine. Que puis-je pour vous ?"
-- Tu es poli, professionnel et concis (max 3 phrases par reponse)
-- Tu ne pretends JAMAIS etre Sidoine lui-meme, tu es SON assistant
-- Si la question depasse tes competences ou necessite une action humaine, dis: "Je transmets votre message a Sidoine, il vous repondra des que possible."
-- Tu peux repondre aux questions sur le profil de Sidoine:
-
-PROFIL DE SIDOINE:
-- Data Analyst, Developpeur Fullstack & Expert MEAL
-- Poste actuel: Conseiller Global Suivi, Evaluation & Apprentissage au CCR-Benin (Bohicon)
-- Competences: Python, R, SQL, Power BI, Tableau, Django, React, IA/ML, RAG, LangChain
-- Domaines: Agroecologie, Filiere riz, Suivi-Evaluation, Data Science, Developpement web
-- Contact: syebadokpo@gmail.com | +229 01 96 91 13 46
-- Portfolio: https://huggingface.co/spaces/Sidoineko/portfolio
-- GitHub: https://github.com/Sidoineko
-
-Si on te demande un service technique (site web, analyse de donnees, dashboard, bot, IA), confirme que Sidoine peut le faire et propose de planifier un echange.`;
-
-                    const reply = await getAIResponse(text, sysPrompt);
-                    const formattedReply = `🤖 *Assistant Personnel*\n\n${reply}`;
+                    // Utiliser le module ai.js pour la cohérence (nom + historique)
+                    const aiModule = require('./src/services/ai');
+                    const callerName = msg.pushName && msg.pushName.trim().length > 0
+                        ? msg.pushName.trim()
+                        : '+' + msgSenderClean;
+                    const history = aiModule.getConversationHistory(remoteJid);
+                    const reply = await aiModule.getAIResponse(text, callerName, history);
+                    const formattedReply = `🤖 *Assistant de Sidoine*\n\n${reply}`;
                     await sock.sendMessage(remoteJid, { text: formattedReply }, { quoted: msg });
 
                     if (readReceiptsEnabled) {
@@ -1173,28 +1159,21 @@ Si on te demande un service technique (site web, analyse de donnees, dashboard, 
             // Check for missed, rejected or timeout statuses
             if (call.status === 'timeout' || call.status === 'reject' || (call.status === 'terminate' && !call.isGroup)) {
                 const callerId = call.from;
+                const callerName = '+' + callerId.split('@')[0];
                 console.log(chalk.yellow(`[Call] Missed/Rejected call from ${callerId}`));
 
                 try {
-                    // 1. Generate professional excuse via AI (Llama 3 8B for speed)
+                    // 1. Générer une excuse professionnelle via NVIDIA NIM
                     let aiText = "Désolé, je ne peux pas répondre pour le moment. Je vous rappelle dès que possible.";
-
-                    if (groq) {
-                        try {
-                            const chatCompletion = await groq.chat.completions.create({
-                                messages: [
-                                    {
-                                        role: "system",
-                                        content: "Tu es l'assistant de PSYCHO-BOT. Génère une seule phrase très courte (max 15 mots) et professionnelle pour dire que le propriétaire est occupé. Pas d'humour, reste sérieux."
-                                    }
-                                ],
-                                model: "llama3-8b-8192",
-                                max_tokens: 100,
-                            });
-                            aiText = chatCompletion.choices[0]?.message?.content || aiText;
-                        } catch (aiErr) {
-                            console.error('[Call AI Error]:', aiErr.message);
-                        }
+                    try {
+                        aiText = await getAIResponse(
+                            `Génère UNE SEULE phrase très courte (max 15 mots) et professionnelle pour informer l'appelant que Sidoine est occupé et ne peut pas répondre à l'appel. Sois direct et poli.`,
+                            "Tu es l'assistant vocal de Sidoine. Réponds uniquement avec la phrase demandée, sans guillemets ni explication."
+                        );
+                        // Nettoyer les guillemets éventuels
+                        aiText = aiText.replace(/^["«»]|["«»]$/g, '').trim();
+                    } catch (aiErr) {
+                        console.error('[Call AI Error]:', aiErr.message);
                     }
 
                     // 2. Convert to Voice Note (Google TTS)
@@ -1217,10 +1196,11 @@ Si on te demande un service technique (site web, analyse de donnees, dashboard, 
                         console.error('[Call Voice Error]', e.message);
                     }
 
-                    // 4. Notify Owner
+                    // 4. Notifier le propriétaire avec heure locale
                     const ownerJid = (sock.user?.id || OWNER_PN + "@s.whatsapp.net").split(':')[0] + "@s.whatsapp.net";
+                    const callTime = new Date().toLocaleString('fr-FR', { timeZone: 'Africa/Porto-Novo' });
                     await sock.sendMessage(ownerJid, {
-                        text: `📞 *Appel Manqué (Auto-Reply)*\n━━━━━━━━━━━━━━\n👤 *De:* @${callerId.split('@')[0]}\n📝 *Assistant:* "${aiText.trim()}"`,
+                        text: `📞 *Appel Manqué (Auto-Reply)*\n━━━━━━━━━━━━━━\n👤 *De :* @${callerId.split('@')[0]}\n🕐 *Heure :* ${callTime}\n📝 *Message envoyé :* "${aiText.trim()}"`,
                         mentions: [callerId]
                     });
 

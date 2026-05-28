@@ -13,6 +13,16 @@ db.serialize(() => {
             commandCount INTEGER DEFAULT 0
         )
     `);
+    db.run(`
+        CREATE TABLE IF NOT EXISTS agenda (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            from_jid TEXT NOT NULL,
+            from_name TEXT,
+            message TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            read INTEGER DEFAULT 0
+        )
+    `);
 });
 
 function getOrRegisterUser(userId, name) {
@@ -63,10 +73,57 @@ function getTotalCommands() {
 }
 
 
+// --- AGENDA ---
+
+function saveAgendaMessage(fromJid, fromName, message) {
+    return new Promise((resolve, reject) => {
+        const createdAt = new Date().toISOString();
+        db.run(
+            "INSERT INTO agenda (from_jid, from_name, message, created_at) VALUES (?, ?, ?, ?)",
+            [fromJid, fromName || fromJid.split('@')[0], message, createdAt],
+            function (err) {
+                if (err) return reject(err);
+                resolve(this.lastID);
+            }
+        );
+    });
+}
+
+function getUnreadAgendaMessages() {
+    return new Promise((resolve, reject) => {
+        db.all("SELECT * FROM agenda WHERE read = 0 ORDER BY created_at ASC", (err, rows) => {
+            if (err) return reject(err);
+            resolve(rows || []);
+        });
+    });
+}
+
+function markAgendaRead(id) {
+    return new Promise((resolve, reject) => {
+        db.run("UPDATE agenda SET read = 1 WHERE id = ?", [id], (err) => {
+            if (err) return reject(err);
+            resolve();
+        });
+    });
+}
+
+function markAllAgendaRead() {
+    return new Promise((resolve, reject) => {
+        db.run("UPDATE agenda SET read = 1 WHERE read = 0", (err) => {
+            if (err) return reject(err);
+            resolve();
+        });
+    });
+}
+
 // --- ON S'ASSURE QU'ELLES SONT BIEN EXPORTÉES ---
 module.exports = {
     getOrRegisterUser,
     incrementCommandCount,
-    getTotalUsers,     // <--- Ligne cruciale
-    getTotalCommands,  // <--- Ligne cruciale
+    getTotalUsers,
+    getTotalCommands,
+    saveAgendaMessage,
+    getUnreadAgendaMessages,
+    markAgendaRead,
+    markAllAgendaRead,
 };
