@@ -1,4 +1,6 @@
 const fetch = require('node-fetch');
+const fs = require('fs');
+const path = require('path');
 
 const NVIDIA_API_KEY = process.env.NVIDIA_NIM_API_KEY || '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';
 const NVIDIA_API_URL = 'https://integrate.api.nvidia.com/v1';
@@ -7,10 +9,40 @@ const MODEL = process.env.NVIDIA_NIM_MODEL || 'meta/llama-3.3-70b-instruct';
 // Mémoire de conversation par JID (clé = remoteJid)
 const conversationMemory = new Map();
 
-// Contacts déjà accueillis — stocke { ts: Date.now() } par JID
+// Contacts déjà accueillis — persist dans un fichier JSON pour survire aux redémarrages Render
 // Durée : 24h. Passé ce délai le prochain message reçoit à nouveau l'intro.
 const GREETING_TTL_MS = 24 * 60 * 60 * 1000;
-const greetedContacts = new Map();
+const GREETING_FILE = path.join(__dirname, '../../.greeted-contacts.json');
+let greetedContacts = new Map();
+
+// Charger les contacts accueillis au démarrage du service
+function loadGreetedContacts() {
+    try {
+        if (fs.existsSync(GREETING_FILE)) {
+            const data = fs.readFileSync(GREETING_FILE, 'utf8');
+            const parsed = JSON.parse(data);
+            greetedContacts = new Map(Object.entries(parsed));
+            console.log(`[AI] ✅ Loaded ${greetedContacts.size} greeted contacts from file`);
+        }
+    } catch (err) {
+        console.warn(`[AI] Warning loading greeted contacts: ${err.message}`);
+        greetedContacts = new Map();
+    }
+}
+
+// Sauvegarder les contacts accueillis (appelé après chaque nouveau premier contact)
+function saveGreetedContacts() {
+    try {
+        const obj = Object.fromEntries(greetedContacts);
+        fs.writeFileSync(GREETING_FILE, JSON.stringify(obj, null, 2), 'utf8');
+        console.log(`[AI] ✅ Saved ${greetedContacts.size} greeted contacts`);
+    } catch (err) {
+        console.warn(`[AI] Warning saving greeted contacts: ${err.message}`);
+    }
+}
+
+// Charger au démarrage du service
+loadGreetedContacts();
 
 function isFirstContact(jid) {
     if (!jid) return true;
@@ -20,7 +52,10 @@ function isFirstContact(jid) {
 }
 
 function markContacted(jid) {
-    if (jid) greetedContacts.set(jid, { ts: Date.now() });
+    if (jid) {
+        greetedContacts.set(jid, { ts: Date.now() });
+        saveGreetedContacts();
+    }
 }
 
 // ── System prompts ────────────────────────────────────────────────────────────
@@ -171,6 +206,7 @@ function clearConversationMemory(jid) {
     if (jid) {
         conversationMemory.delete(jid);
         greetedContacts.delete(jid); // reset le cooldown aussi
+        saveGreetedContacts(); // persister le changement
     }
 }
 
