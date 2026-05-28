@@ -913,13 +913,13 @@ Type !help pour plus de details!`;
                 try {
                     await sock.sendPresenceUpdate('composing', remoteJid);
 
-                    // Utiliser le module ai.js pour la cohérence (nom + historique)
+                    // Utiliser le module ai.js pour la cohérence (nom + historique par JID)
                     const aiModule = require('./src/services/ai');
                     const callerName = msg.pushName && msg.pushName.trim().length > 0
                         ? msg.pushName.trim()
                         : '+' + msgSenderClean;
                     const history = aiModule.getConversationHistory(remoteJid);
-                    const reply = await aiModule.getAIResponse(text, callerName, history);
+                    const reply = await aiModule.getAIResponse(text, callerName, history, remoteJid);
                     const formattedReply = `🤖 *Assistant de Sidoine*\n\n${reply}`;
                     await sock.sendMessage(remoteJid, { text: formattedReply }, { quoted: msg });
 

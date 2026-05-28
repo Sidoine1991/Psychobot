@@ -4,26 +4,39 @@ const NVIDIA_API_KEY = process.env.NVIDIA_NIM_API_KEY || 'nvapi-GnCQa3DKW7fXfGKn
 const NVIDIA_API_URL = 'https://integrate.api.nvidia.com/v1';
 const MODEL = process.env.NVIDIA_NIM_MODEL || 'meta/llama-3.3-70b-instruct';
 
-// Mémoire de conversation par JID (clé = JID du contact)
+// Mémoire de conversation par JID (clé = remoteJid du contact)
 const conversationMemory = new Map();
 
-function buildSystemPrompt(contactName) {
-    const nameClause = contactName
-        ? `La personne avec qui tu parles s'appelle *${contactName}*. Utilise son prénom naturellement dans la conversation quand c'est approprié.`
-        : `Tu ne connais pas encore le nom de l'interlocuteur.`;
+function buildSystemPrompt(contactName, hasHistory) {
+    const nameFormatted = contactName ? `_*${contactName}*_` : null;
+    const nameClause = nameFormatted
+        ? `La personne avec qui tu parles s'appelle ${nameFormatted}. Utilise son prénom dans chaque réponse — écrit exactement ainsi : _*${contactName}*_ (format WhatsApp gras+italique).`
+        : `Tu ne connais pas encore le nom de l'interlocuteur. Commence par "Bonjour ! 😊".`;
 
-    return `Tu es l'assistant virtuel personnel de Sidoine Kolaolé YEBADOKPO. Tu gères ses échanges WhatsApp en son absence.
+    const historyClause = hasHistory
+        ? `Tu as déjà eu des échanges avec cette personne (l'historique est inclus dans la conversation). Si sa question fait référence à un échange passé, réponds en tenant compte du contexte précédent sans lui demander de répéter. Montre que tu te souviens.`
+        : `C'est le premier échange avec cette personne. Sois chaleureux et accueillant.`;
+
+    return `Tu es l'assistant virtuel personnel de Sidoine Kolaolé YEBADOKPO. Tu gères ses échanges WhatsApp en son absence avec beaucoup de bienveillance.
 
 ${nameClause}
 
-RÈGLES STRICTES :
-- Réponds TOUJOURS en français sauf si l'interlocuteur écrit en anglais ou une autre langue.
-- Tu es poli, chaleureux, professionnel et concis (maximum 3 phrases par réponse sauf si on te demande plus).
-- Tu ne prétends JAMAIS être Sidoine lui-même. Tu ES son assistant.
-- Utilise le prénom/nom de l'interlocuteur naturellement (ex: "Bonjour Jean !", "Bien sûr, Marie,...").
-- Si tu ne connais pas le nom, commence par "Bonjour !" la première fois, puis adapte-toi.
-- Si la question nécessite l'intervention de Sidoine : "Je transmets votre message à Sidoine, il vous reviendra dès que possible."
-- Si quelqu'un veut laisser un message : confirme que c'est enregistré et sera transmis.
+${historyClause}
+
+RÈGLES DE COMMUNICATION :
+- Réponds TOUJOURS dans la langue de l'interlocuteur (français si français, anglais si anglais, etc.).
+- Ton style : chaleureux, convivial, poli, professionnel. Jamais froid ni robotique.
+- Longueur : concis (2-3 phrases max) sauf si on te demande une explication longue.
+- Tu ne prétends JAMAIS être Sidoine lui-même. Tu ES son assistant bienveillant.
+- Si la question dépasse tes attributions : "Je transmets votre demande à _*Sidoine*_ qui vous répondra dès que possible 🙏"
+- Si quelqu'un veut laisser un message : confirme chaleureusement que c'est noté.
+
+FORMATAGE WHATSAPP (OBLIGATOIRE) :
+- Prénom de l'interlocuteur : toujours _*Prénom*_ (gras + italique)
+- Utilise des émojis expressifs et pertinents pour rendre le message vivant 😊✨🙏💡
+- Structure : salutation courte → réponse → closing chaleureux
+- Exemple : "Bonjour _*Marie*_ ! 😊 Bien sûr, voici ce que je peux vous dire... N'hésitez pas si vous avez d'autres questions 🙏"
+- Évite les listes à puces longues dans les réponses conversationnelles.
 
 PROFIL DE SIDOINE :
 - Data Analyst, Développeur Fullstack & Expert MEAL (Monitoring, Évaluation, Redevabilité, Apprentissage)
@@ -34,20 +47,24 @@ PROFIL DE SIDOINE :
 - Portfolio : https://huggingface.co/spaces/Sidoineko/portfolio
 - GitHub : https://github.com/Sidoineko
 
-Si quelqu'un demande un service (site web, analyse de données, dashboard, bot, IA, rapport) : confirme que Sidoine peut le faire et propose de planifier un échange.`;
+Si quelqu'un demande un service (site web, analyse de données, dashboard, bot, IA, rapport) : confirme que _*Sidoine*_ peut le faire et propose de planifier un échange 📅`;
 }
 
-async function getAIResponse(prompt, contactName = null, conversationHistory = []) {
+// jid = remoteJid (clé stable pour la mémoire)
+// contactName = msg.pushName (affiché dans la réponse)
+async function getAIResponse(prompt, contactName = null, conversationHistory = [], jid = null) {
     console.log(`[AI Service] Prompt de "${contactName || 'inconnu'}": ${prompt.substring(0, 60)}`);
+
+    const hasHistory = conversationHistory && conversationHistory.length > 0;
 
     try {
         const messages = [
-            { role: 'system', content: buildSystemPrompt(contactName) }
+            { role: 'system', content: buildSystemPrompt(contactName, hasHistory) }
         ];
 
-        // Injecter l'historique de conversation (contexte)
-        if (conversationHistory && conversationHistory.length > 0) {
-            messages.push(...conversationHistory.slice(-10)); // Max 5 échanges (10 messages)
+        // Injecter l'historique (max 10 derniers messages = 5 échanges)
+        if (hasHistory) {
+            messages.push(...conversationHistory.slice(-10));
         }
 
         messages.push({ role: 'user', content: prompt });
@@ -78,14 +95,14 @@ async function getAIResponse(prompt, contactName = null, conversationHistory = [
         const data = await response.json();
         const aiReply = data.choices[0].message.content.trim();
 
-        // Mémoriser l'échange pour ce contact
-        if (contactName) {
-            const key = contactName;
-            if (!conversationMemory.has(key)) conversationMemory.set(key, []);
-            const mem = conversationMemory.get(key);
+        // Mémoriser par JID (clé stable) — fallback sur contactName si pas de JID
+        const memKey = jid || contactName;
+        if (memKey) {
+            if (!conversationMemory.has(memKey)) conversationMemory.set(memKey, []);
+            const mem = conversationMemory.get(memKey);
             mem.push({ role: 'user', content: prompt });
             mem.push({ role: 'assistant', content: aiReply });
-            // Conserver les 10 derniers échanges (20 messages)
+            // Conserver les 20 derniers messages (10 échanges)
             if (mem.length > 20) mem.splice(0, 2);
         }
 
@@ -95,18 +112,19 @@ async function getAIResponse(prompt, contactName = null, conversationHistory = [
     } catch (error) {
         console.error('[AI Service] ❌ Erreur:', error.message);
 
-        const name = contactName ? ` ${contactName}` : '';
-        return `Bonjour${name} ! Je rencontre une difficulté technique momentanée. `
-            + `Votre message est bien reçu et je le transmets à Sidoine qui vous répondra dès que possible. 🙏`;
+        const name = contactName ? ` _*${contactName}*_` : '';
+        return `Bonjour${name} ! 🙏 Je rencontre une petite difficulté technique. `
+            + `Votre message est bien reçu et je le transmets à _*Sidoine*_ qui vous répondra dès que possible. 😊`;
     }
 }
 
-function getConversationHistory(contactKey) {
-    return conversationMemory.get(contactKey) || [];
+// Récupère l'historique par JID (à passer depuis index.js comme remoteJid)
+function getConversationHistory(jid) {
+    return conversationMemory.get(jid) || [];
 }
 
-function clearConversationMemory(contactKey) {
-    if (contactKey) conversationMemory.delete(contactKey);
+function clearConversationMemory(jid) {
+    if (jid) conversationMemory.delete(jid);
 }
 
 module.exports = {
