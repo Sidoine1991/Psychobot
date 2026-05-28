@@ -46,9 +46,26 @@ loadGreetedContacts();
 
 function isFirstContact(jid) {
     if (!jid) return true;
+
+    // Si la conversation a des messages récents (< 30 min), ce n'est pas un "premier contact"
+    if (hasRecentConversation(jid)) {
+        console.log(`[AI] Conversation active détectée avec ${jid} — skipping intro`);
+        return false;
+    }
+
     const entry = greetedContacts.get(jid);
     if (!entry) return true;
     return (Date.now() - entry.ts) > GREETING_TTL_MS;
+}
+
+function hasRecentConversation(jid, thresholdMinutes = 30) {
+    if (!jid) return false;
+    const history = conversationMemory.get(jid) || [];
+    if (history.length === 0) return false;
+
+    // S'il y a au moins un message dans l'historique, c'est une conversation active
+    // (La mémoire contient user + assistant pairs, donc min 2 messages = 1 échange)
+    return history.length >= 2;
 }
 
 function markContacted(jid) {
@@ -215,4 +232,5 @@ module.exports = {
     getConversationHistory,
     clearConversationMemory,
     buildSystemPrompt,
+    hasRecentConversation,
 };
