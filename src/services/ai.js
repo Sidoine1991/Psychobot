@@ -4,41 +4,28 @@ const NVIDIA_API_KEY = process.env.NVIDIA_NIM_API_KEY || 'nvapi-GnCQa3DKW7fXfGKn
 const NVIDIA_API_URL = 'https://integrate.api.nvidia.com/v1';
 const MODEL = process.env.NVIDIA_NIM_MODEL || 'meta/llama-3.3-70b-instruct';
 
-// Mémoire de conversation par JID (clé = remoteJid du contact)
+// Mémoire de conversation par JID (clé = remoteJid)
 const conversationMemory = new Map();
 
-function buildSystemPrompt(contactName, hasHistory) {
-    const nameFormatted = contactName ? `_*${contactName}*_` : null;
-    const nameClause = nameFormatted
-        ? `La personne avec qui tu parles s'appelle ${nameFormatted}. Utilise son prénom dans chaque réponse — écrit exactement ainsi : _*${contactName}*_ (format WhatsApp gras+italique).`
-        : `Tu ne connais pas encore le nom de l'interlocuteur. Commence par "Bonjour ! 😊".`;
+// Contacts déjà accueillis — stocke { ts: Date.now() } par JID
+// Durée : 24h. Passé ce délai le prochain message reçoit à nouveau l'intro.
+const GREETING_TTL_MS = 24 * 60 * 60 * 1000;
+const greetedContacts = new Map();
 
-    const historyClause = hasHistory
-        ? `Tu as déjà eu des échanges avec cette personne (l'historique est inclus dans la conversation). Si sa question fait référence à un échange passé, réponds en tenant compte du contexte précédent sans lui demander de répéter. Montre que tu te souviens.`
-        : `C'est le premier échange avec cette personne. Sois chaleureux et accueillant.`;
+function isFirstContact(jid) {
+    if (!jid) return true;
+    const entry = greetedContacts.get(jid);
+    if (!entry) return true;
+    return (Date.now() - entry.ts) > GREETING_TTL_MS;
+}
 
-    return `Tu es l'assistant virtuel personnel de Sidoine Kolaolé YEBADOKPO. Tu gères ses échanges WhatsApp en son absence avec beaucoup de bienveillance.
+function markContacted(jid) {
+    if (jid) greetedContacts.set(jid, { ts: Date.now() });
+}
 
-${nameClause}
+// ── System prompts ────────────────────────────────────────────────────────────
 
-${historyClause}
-
-RÈGLES DE COMMUNICATION :
-- Réponds TOUJOURS dans la langue de l'interlocuteur (français si français, anglais si anglais, etc.).
-- Ton style : chaleureux, convivial, poli, professionnel. Jamais froid ni robotique.
-- Longueur : concis (2-3 phrases max) sauf si on te demande une explication longue.
-- Tu ne prétends JAMAIS être Sidoine lui-même. Tu ES son assistant bienveillant.
-- Si la question dépasse tes attributions : "Je transmets votre demande à _*Sidoine*_ qui vous répondra dès que possible 🙏"
-- Si quelqu'un veut laisser un message : confirme chaleureusement que c'est noté.
-
-FORMATAGE WHATSAPP (OBLIGATOIRE) :
-- Prénom de l'interlocuteur : toujours _*Prénom*_ (gras + italique)
-- Utilise des émojis expressifs et pertinents pour rendre le message vivant 😊✨🙏💡
-- Structure : salutation courte → réponse → closing chaleureux
-- Exemple : "Bonjour _*Marie*_ ! 😊 Bien sûr, voici ce que je peux vous dire... N'hésitez pas si vous avez d'autres questions 🙏"
-- Évite les listes à puces longues dans les réponses conversationnelles.
-
-PROFIL DE SIDOINE :
+const SIDOINE_PROFILE = `PROFIL DE SIDOINE :
 - Data Analyst, Développeur Fullstack & Expert MEAL (Monitoring, Évaluation, Redevabilité, Apprentissage)
 - Poste : Conseiller Global Suivi, Évaluation & Apprentissage au CCR-Bénin (Bohicon)
 - Compétences : Python, R, SQL, Power BI, Tableau, Django, React, IA/ML, RAG, LangChain, TradingView
@@ -48,18 +35,96 @@ PROFIL DE SIDOINE :
 - GitHub : https://github.com/Sidoineko
 
 Si quelqu'un demande un service (site web, analyse de données, dashboard, bot, IA, rapport) : confirme que _*Sidoine*_ peut le faire et propose de planifier un échange 📅`;
+
+function buildSystemPrompt(contactName, firstContact) {
+    const name = contactName ? `_*${contactName}*_` : null;
+    const nameClause = name
+        ? `La personne s'appelle ${name}. Utilise son prénom dans tes réponses — toujours en format WhatsApp gras+italique : _*${contactName}*_.`
+        : `Tu ne connais pas encore le nom de l'interlocuteur.`;
+
+    if (firstContact) {
+        // Premier message de la conversation : présenter l'absence de Sidoine UNE SEULE FOIS
+        return `Tu es l'assistant virtuel personnel de Sidoine Kolaolé YEBADOKPO. Tu gères ses échanges WhatsApp en son absence.
+
+${nameClause}
+
+C'est le PREMIER message de cette conversation. Commence par informer poliment que Sidoine n'est pas disponible pour le moment, puis réponds à la question ou au message reçu.
+
+RÈGLES :
+- Réponds TOUJOURS dans la langue de l'interlocuteur (français/anglais/etc.).
+- Ton : chaleureux, convivial, professionnel. Jamais froid ni robotique.
+- Longueur : concis (2-4 phrases) sauf si une explication longue est explicitement demandée.
+- Tu n'es PAS Sidoine. Tu ES son assistant bienveillant.
+- Si la demande dépasse tes attributions : "Je transmets à _*Sidoine*_ qui vous répondra dès que possible 🙏"
+- Émojis expressifs et pertinents 😊✨🙏💡
+- Prénom toujours en _*Prénom*_ (gras + italique WhatsApp)
+
+${SIDOINE_PROFILE}`;
+    }
+
+    // Messages suivants (conversation en cours) : PAS de répétition de l'intro absence
+    return `Tu es l'assistant virtuel de Sidoine Kolaolé YEBADOKPO, en conversation active avec ${name || 'un contact'}.
+
+${nameClause}
+
+CONTEXTE : Tu es déjà en échange avec cette personne. L'absence de Sidoine a déjà été mentionnée au début. NE la répète PAS.
+
+RÈGLES POUR CETTE RÉPONSE :
+- Réponds DIRECTEMENT à la question ou au message, sans répéter la présentation initiale.
+- Engage la conversation de façon naturelle, comme dans un vrai échange humain.
+- Tiens compte de l'historique de la conversation (messages précédents inclus).
+- Réponds dans la langue de l'interlocuteur.
+- Ton : naturel, chaleureux, direct. Comme si tu connaissais déjà la personne.
+- Longueur : adaptée à la question. Court si simple, développé si technique.
+- Si nouveau sujet important : tu peux mentionner que _*Sidoine*_ sera informé, mais pas systématiquement.
+- Émojis avec parcimonie — seulement quand pertinent.
+- Prénom toujours en _*Prénom*_ si utilisé.
+
+${SIDOINE_PROFILE}`;
 }
 
-// jid = remoteJid (clé stable pour la mémoire)
-// contactName = msg.pushName (affiché dans la réponse)
+// ── LLM caller ────────────────────────────────────────────────────────────────
+
+async function callNVIDIA(messages) {
+    const response = await fetch(`${NVIDIA_API_URL}/chat/completions`, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${NVIDIA_API_KEY}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            model: MODEL,
+            messages,
+            temperature: 0.72,
+            top_p: 0.9,
+            max_tokens: 512
+        }),
+        timeout: 20000
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`NVIDIA API ${response.status}: ${errorText.substring(0, 120)}`);
+    }
+
+    const data = await response.json();
+    return data.choices[0].message.content.trim();
+}
+
+// ── Main entry point ──────────────────────────────────────────────────────────
+
+// jid          = remoteJid (clé stable pour la mémoire et le cooldown 24h)
+// contactName  = msg.pushName
 async function getAIResponse(prompt, contactName = null, conversationHistory = [], jid = null) {
     console.log(`[AI Service] Prompt de "${contactName || 'inconnu'}": ${prompt.substring(0, 60)}`);
 
+    const memKey = jid || contactName;
+    const firstContact = isFirstContact(memKey);
     const hasHistory = conversationHistory && conversationHistory.length > 0;
 
     try {
         const messages = [
-            { role: 'system', content: buildSystemPrompt(contactName, hasHistory) }
+            { role: 'system', content: buildSystemPrompt(contactName, firstContact) }
         ];
 
         // Injecter l'historique (max 10 derniers messages = 5 échanges)
@@ -69,34 +134,12 @@ async function getAIResponse(prompt, contactName = null, conversationHistory = [
 
         messages.push({ role: 'user', content: prompt });
 
-        const payload = {
-            model: MODEL,
-            messages,
-            temperature: 0.72,
-            top_p: 0.9,
-            max_tokens: 512
-        };
+        const aiReply = await callNVIDIA(messages);
 
-        const response = await fetch(`${NVIDIA_API_URL}/chat/completions`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${NVIDIA_API_KEY}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload),
-            timeout: 20000
-        });
+        // Marquer ce contact comme "déjà accueilli" après la première réponse réussie
+        if (firstContact && memKey) markContacted(memKey);
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`NVIDIA API ${response.status}: ${errorText.substring(0, 120)}`);
-        }
-
-        const data = await response.json();
-        const aiReply = data.choices[0].message.content.trim();
-
-        // Mémoriser par JID (clé stable) — fallback sur contactName si pas de JID
-        const memKey = jid || contactName;
+        // Mémoriser l'échange
         if (memKey) {
             if (!conversationMemory.has(memKey)) conversationMemory.set(memKey, []);
             const mem = conversationMemory.get(memKey);
@@ -106,7 +149,7 @@ async function getAIResponse(prompt, contactName = null, conversationHistory = [
             if (mem.length > 20) mem.splice(0, 2);
         }
 
-        console.log(`[AI Service] ✅ Réponse NVIDIA: ${aiReply.substring(0, 60)}...`);
+        console.log(`[AI Service] ✅ Réponse (${firstContact ? 'premier contact' : 'suite conversation'}): ${aiReply.substring(0, 80)}...`);
         return aiReply;
 
     } catch (error) {
@@ -118,13 +161,17 @@ async function getAIResponse(prompt, contactName = null, conversationHistory = [
     }
 }
 
-// Récupère l'historique par JID (à passer depuis index.js comme remoteJid)
+// ── Exports helpers ───────────────────────────────────────────────────────────
+
 function getConversationHistory(jid) {
     return conversationMemory.get(jid) || [];
 }
 
 function clearConversationMemory(jid) {
-    if (jid) conversationMemory.delete(jid);
+    if (jid) {
+        conversationMemory.delete(jid);
+        greetedContacts.delete(jid); // reset le cooldown aussi
+    }
 }
 
 module.exports = {
