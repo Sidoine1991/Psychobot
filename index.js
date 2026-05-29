@@ -18,6 +18,11 @@ const googleTTS = require('google-tts-api');
 require('dotenv').config();
 const { convertToOpus } = require('./src/lib/audioHelper');
 
+// New conversation state management
+const { setOwnerActive, isConversationActive, updateUserMessageType, shouldAutoReplyBasedOnActivity } = require('./src/db/conversationState');
+const { detectMessageType } = require('./src/handlers/messageClassifier');
+const { getAutoReplyTemplate, formatReplyForWhatsApp } = require('./src/handlers/autoReplyTemplates');
+
 const NVIDIA_NIM_API_KEY = process.env.NVIDIA_NIM_API_KEY || "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";
 const NVIDIA_NIM_BASE = "https://integrate.api.nvidia.com/v1";
 const NVIDIA_NIM_MODEL = process.env.NVIDIA_NIM_MODEL || "meta/llama-3.3-70b-instruct";
@@ -838,6 +843,8 @@ Type !help pour plus de details!`;
 
         if (isFromOwner) {
             lastOwnerActionTime = Date.now();
+            // [NEW] Mark owner as active in conversation state
+            setOwnerActive(remoteJid);
         }
 
         // Text extraction
@@ -900,45 +907,86 @@ Type !help pour plus de details!`;
         }
         if (gameHandled) return;
 
-        // --- INTELLIGENT AUTO-REPLY (Private messages only, not from owner) ---
-        console.log(`[MSG] Checking auto-reply: text="${text.substring(0, 30)}" | PREFIX=${PREFIX} | fromOwner=${isFromOwner} | isGroup=${remoteJid.endsWith('@g.us')}`);
+        // --- ENHANCED INTELLIGENT AUTO-REPLY (Private messages only, not from owner) ---
         if (!text.startsWith(PREFIX) && !isFromOwner && !remoteJid.endsWith('@g.us')) {
-            const isOwnerOnline = (Date.now() - lastOwnerActionTime) < 2 * 60 * 1000;
-            const timeSinceLastAction = Math.floor((Date.now() - lastOwnerActionTime) / 1000);
-            console.log(`[AI] Owner online check: ${isOwnerOnline} (${timeSinceLastAction}s since last action)`);
-            if (isOwnerOnline) {
-                console.log(`[AI] Ignored: Owner is online (${timeSinceLastAction}s ago).`);
-            } else {
-                console.log(`[AI] Private msg from ${msgSenderClean}: ${text.substring(0, 50)}`);
+            // [NEW] Detect message type (audio, image, text, etc.)
+            const messageType = detectMessageType(msg.message);
+            console.log(`[AutoReply] Type detected: ${messageType}`);
+            updateUserMessageType(remoteJid, messageType);
+
+            // [NEW] Check if conversation is active (owner replied < 15 min ago)
+            if (isConversationActive(remoteJid)) {
+                console.log(`[AutoReply] SKIPPED: Conversation active (owner replied recently)`);
+                return; // Don't auto-reply
+            }
+
+            // [NEW] Decide reply level based on owner activity
+            const autoReplyDecision = shouldAutoReplyBasedOnActivity(remoteJid);
+            console.log(`[AutoReply] Decision: ${autoReplyDecision} | MessageType: ${messageType}`);
+
+            // Handle specific message types
+            if (messageType === 'voice_note' || messageType === 'audio_document' || messageType === 'audio') {
                 try {
-                    await sock.sendPresenceUpdate('composing', remoteJid);
-
-                    // Utiliser le module ai.js pour la cohérence (nom + historique par JID)
-                    const aiModule = require('./src/services/ai');
-                    const callerName = msg.pushName && msg.pushName.trim().length > 0
-                        ? msg.pushName.trim()
-                        : '+' + msgSenderClean;
-                    const history = aiModule.getConversationHistory(remoteJid);
-                    const reply = await aiModule.getAIResponse(text, callerName, history, remoteJid);
-                    const formattedReply = `🤖 *Assistant de Sidoine*\n\n${reply}`;
-                    await sock.sendMessage(remoteJid, { text: formattedReply }, { quoted: msg });
-
-                    if (readReceiptsEnabled) {
-                        await sock.readMessages([msg.key]);
+                    const template = getAutoReplyTemplate('audio_ack', messageType, '');
+                    const reply = formatReplyForWhatsApp(template, true);
+                    if (reply) {
+                        await sock.sendMessage(remoteJid, { text: reply }, { quoted: msg });
+                        if (readReceiptsEnabled) await sock.readMessages([msg.key]);
                     }
+                    console.log(`[AutoReply] Audio ack sent`);
+                    return;
                 } catch (err) {
-                    console.error("[AI] Error:", err.message);
-                    const fallbackResponses = [
-                        '🤖 *Assistant Personnel*\n\nBonjour! Je suis en train de réfléchir à ta question... 🤔',
-                        '🤖 *Assistant Personnel*\n\nMerci pour ton message! Je suis occupé mais je reviens vite! 💫',
-                        '🤖 *Assistant Personnel*\n\nCoucou! Sidoine t\'a mis un assistant. On peut discuter! 🤖',
-                        '🤖 *Assistant Personnel*\n\nBonjour! Je suis le bot de Sidoine. Comment je peux t\'aider? 👋'
-                    ];
-                    const fallback = fallbackResponses[Math.floor(Math.random() * fallbackResponses.length)];
+                    console.error('[AutoReply Audio] Error:', err.message);
+                }
+            }
 
-                    await sock.sendMessage(remoteJid, {
-                        text: fallback
-                    }, { quoted: msg });
+            if (messageType === 'image' || messageType === 'video') {
+                try {
+                    const template = getAutoReplyTemplate('image_ack', messageType, '');
+                    const reply = formatReplyForWhatsApp(template, true);
+                    if (reply) {
+                        await sock.sendMessage(remoteJid, { text: reply }, { quoted: msg });
+                        if (readReceiptsEnabled) await sock.readMessages([msg.key]);
+                    }
+                    console.log(`[AutoReply] Media ack sent`);
+                    return;
+                } catch (err) {
+                    console.error('[AutoReply Media] Error:', err.message);
+                }
+            }
+
+            // Skip auto-reply if conversation not active AND decision is 'skip'
+            if (autoReplyDecision === 'skip') {
+                console.log(`[AutoReply] QUEUED: Owner absent < 60min, multiple messages pending`);
+                return;
+            }
+
+            // Send text-based auto-reply
+            console.log(`[AI] Processing private msg from ${msgSenderClean}: ${text.substring(0, 50)}`);
+            try {
+                await sock.sendPresenceUpdate('composing', remoteJid);
+
+                // Utiliser le module ai.js pour la cohérence (nom + historique par JID)
+                const aiModule = require('./src/services/ai');
+                const callerName = msg.pushName && msg.pushName.trim().length > 0
+                    ? msg.pushName.trim()
+                    : '+' + msgSenderClean;
+                const history = aiModule.getConversationHistory(remoteJid);
+                const reply = await aiModule.getAIResponse(text, callerName, history, remoteJid);
+                const formattedReply = `🤖 *Assistant de Sidoine*\n\n${reply}`;
+                await sock.sendMessage(remoteJid, { text: formattedReply }, { quoted: msg });
+
+                if (readReceiptsEnabled) {
+                    await sock.readMessages([msg.key]);
+                }
+            } catch (err) {
+                console.error("[AI] Error:", err.message);
+
+                // Use template-based fallback
+                const template = getAutoReplyTemplate(autoReplyDecision, messageType, text);
+                const reply = formatReplyForWhatsApp(template, true);
+                if (reply) {
+                    await sock.sendMessage(remoteJid, { text: reply }, { quoted: msg });
                     if (readReceiptsEnabled) await sock.readMessages([msg.key]);
                 }
             }
