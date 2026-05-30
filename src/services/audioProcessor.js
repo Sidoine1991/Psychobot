@@ -76,40 +76,57 @@ async function convertToWav(inputPath) {
  * @param {string} audioPath - Path to audio file (WAV format)
  * @returns {Promise<string>} - Transcribed text
  */
-async function transcribeAudioOpenAI(audioPath) {
-    if (!OPENAI_API_KEY) {
-        throw new Error('OPENAI_API_KEY not configured');
-    }
+async function transcribeWithProvider(audioPath, provider) {
+    const FormData = require('form-data');
+    const audioBuffer = fs.readFileSync(audioPath);
+    const formData = new FormData();
 
-    try {
-        console.log('[AudioProcessor] Transcribing with OpenAI Whisper...');
-        const FormData = require('form-data');
-        const audioBuffer = fs.readFileSync(audioPath);
-
-        const formData = new FormData();
+    if (provider === 'openai') {
         formData.append('file', audioBuffer, { filename: 'audio.wav' });
         formData.append('model', 'whisper-1');
-        formData.append('language', 'fr'); // French by default
-
-        const response = await axios.post(
-            'https://api.openai.com/v1/audio/transcriptions',
-            formData,
-            {
-                headers: {
-                    ...formData.getHeaders(),
-                    'Authorization': `Bearer ${OPENAI_API_KEY}`
-                },
-                timeout: 60000
-            }
-        );
-
-        const text = response.data.text.trim();
-        console.log(`[AudioProcessor] Transcribed: "${text}"`);
-        return text;
-    } catch (error) {
-        console.error('[AudioProcessor] Whisper error:', error.response?.status, error.message);
-        throw error;
+        formData.append('language', 'fr');
+        const response = await axios.post('https://api.openai.com/v1/audio/transcriptions', formData, {
+            headers: { ...formData.getHeaders(), 'Authorization': `Bearer ${OPENAI_API_KEY}` },
+            timeout: 60000
+        });
+        return response.data.text.trim();
     }
+
+    if (provider === 'nvidia') {
+        formData.append('file', audioBuffer, { filename: 'audio.wav' });
+        formData.append('model', 'nvidia/canary-1b');
+        formData.append('language', 'fr');
+        const response = await axios.post(`${NVIDIA_NIM_BASE}/audio/transcriptions`, formData, {
+            headers: { ...formData.getHeaders(), 'Authorization': `Bearer ${NVIDIA_NIM_API_KEY}` },
+            timeout: 60000
+        });
+        return response.data.text.trim();
+    }
+
+    throw new Error(`Unknown provider: ${provider}`);
+}
+
+async function transcribeAudioOpenAI(audioPath) {
+    const providers = [];
+    if (OPENAI_API_KEY) providers.push('openai');
+    if (NVIDIA_NIM_API_KEY) providers.push('nvidia');
+
+    if (providers.length === 0) {
+        throw new Error('Neither OPENAI_API_KEY nor NVIDIA_NIM_API_KEY configured');
+    }
+
+    for (const provider of providers) {
+        try {
+            console.log(`[AudioProcessor] Transcribing with ${provider}...`);
+            const text = await transcribeWithProvider(audioPath, provider);
+            console.log(`[AudioProcessor] Transcribed (${provider}): "${text}"`);
+            return text;
+        } catch (error) {
+            console.warn(`[AudioProcessor] ${provider} failed: ${error.response?.status || error.message} — trying next...`);
+        }
+    }
+
+    throw new Error('All transcription providers failed');
 }
 
 /**
