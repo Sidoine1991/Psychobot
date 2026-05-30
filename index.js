@@ -924,19 +924,71 @@ Type !help pour plus de details!`;
             const autoReplyDecision = shouldAutoReplyBasedOnActivity(remoteJid);
             console.log(`[AutoReply] Decision: ${autoReplyDecision} | MessageType: ${messageType}`);
 
-            // Handle specific message types
+            // Handle specific message types - AUDIO PROCESSING
             if (messageType === 'voice_note' || messageType === 'audio_document' || messageType === 'audio') {
                 try {
-                    const template = getAutoReplyTemplate('audio_ack', messageType, '');
-                    const reply = formatReplyForWhatsApp(template, true);
-                    if (reply) {
+                    console.log(`[AudioHandler] Processing voice note from ${remoteJid}...`);
+
+                    // Show "composing" status
+                    await sock.sendPresenceUpdate('composing', remoteJid);
+
+                    // Extract audio message
+                    const audioMessage = msg.message.audioMessage || msg.message.viewOnceMessage?.message?.audioMessage;
+                    if (!audioMessage) {
+                        console.warn('[AudioHandler] No audioMessage found in msg');
+                        const fallback = getAutoReplyTemplate('audio_ack', messageType, '');
+                        const reply = formatReplyForWhatsApp(fallback, true);
                         await sock.sendMessage(remoteJid, { text: reply }, { quoted: msg });
-                        if (readReceiptsEnabled) await sock.readMessages([msg.key]);
+                        return;
                     }
-                    console.log(`[AutoReply] Audio ack sent`);
+
+                    // Process audio: transcribe → AI → text-to-speech
+                    const audioProcessor = require('./src/services/audioProcessor');
+                    const callerName = msg.pushName && msg.pushName.trim().length > 0
+                        ? msg.pushName.trim()
+                        : '+' + msgSenderClean;
+
+                    const { audioPath, transcript, response } = await audioProcessor.processAudioMessage(
+                        audioMessage,
+                        downloadContentFromMessage,
+                        remoteJid,
+                        callerName,
+                        null // getAIResponseFunc handled inside
+                    );
+
+                    console.log(`[AudioHandler] ✓ Got audio response: ${audioPath}`);
+                    console.log(`[AudioHandler] Transcript: "${transcript}"`);
+                    console.log(`[AudioHandler] Response: "${response}"`);
+
+                    // Send audio response
+                    await sock.sendMessage(
+                        remoteJid,
+                        {
+                            audio: fs.readFileSync(audioPath),
+                            mimetype: 'audio/ogg; codecs=opus',
+                            ptt: true,
+                            quoted: msg
+                        }
+                    );
+
+                    // Also send text transcription + response as optional follow-up for clarity
+                    const textSummary = `🎙️ *Transcript*:\n_"${transcript}"_\n\n🤖 *Response*:\n${response}`;
+                    await sock.sendMessage(remoteJid, { text: textSummary }, { quoted: msg });
+
+                    // Cleanup temp files
+                    audioProcessor.cleanup([audioPath]);
+
+                    // Mark as read
+                    if (readReceiptsEnabled) await sock.readMessages([msg.key]);
+
+                    console.log(`[AudioHandler] ✓ Audio response sent successfully`);
                     return;
+
                 } catch (err) {
-                    console.error('[AutoReply Audio] Error:', err.message);
+                    console.error('[AudioHandler] Error:', err.message);
+                    // Send error message
+                    const errorReply = `❌ Erreur lors du traitement de l'audio:\n${err.message.substring(0, 100)}`;
+                    await sock.sendMessage(remoteJid, { text: errorReply }, { quoted: msg });
                 }
             }
 

@@ -67,6 +67,7 @@
     "groq-sdk": "^0.37.0",
     "node-cron": "^3.0.3",
     "node-fetch": "^2.6.1",
+    "openai": "^4.28.0",
     "pastebin-api": "^7.0.0",
     "pastebin-js": "^1.0.5",
     "path": "^0.12.7",
