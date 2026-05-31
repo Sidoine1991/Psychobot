@@ -533,6 +533,77 @@ class Gmail {
             isStarred: message.labelIds?.includes('STARRED') || false
         };
     }
+
+    /**
+     * Get attachment from email
+     * @param {string} messageId - Message ID
+     * @param {string} partId - Part ID (attachment)
+     * @returns {Buffer} File content
+     */
+    async getAttachment(messageId, partId) {
+        await this.initialize();
+
+        try {
+            const response = await this.gmail.users.messages.attachments.get({
+                userId: 'me',
+                messageId: messageId,
+                id: partId
+            });
+
+            const data = response.data.data;
+
+            if (!data) {
+                return null;
+            }
+
+            // Decode base64url to buffer
+            const buffer = Buffer.from(data, 'base64');
+            return buffer;
+
+        } catch (error) {
+            console.error('[Gmail] Attachment fetch error:', error.message);
+            return null;
+        }
+    }
+
+    /**
+     * Get all attachments from a message
+     * @param {string} messageId - Message ID
+     * @returns {Array} [{filename, mimeType, partId, size}]
+     */
+    async getAttachmentsList(messageId) {
+        await this.initialize();
+
+        try {
+            const response = await this.gmail.users.messages.get({
+                userId: 'me',
+                id: messageId,
+                format: 'full'
+            });
+
+            const message = response.data;
+            const attachments = [];
+
+            if (message.payload.parts) {
+                for (const part of message.payload.parts) {
+                    if (part.filename && part.filename.length > 0) {
+                        attachments.push({
+                            filename: part.filename,
+                            mimeType: part.mimeType,
+                            partId: part.partId,
+                            size: part.size || 0
+                        });
+                    }
+                }
+            }
+
+            return attachments;
+
+        } catch (error) {
+            console.error('[Gmail] Attachments list error:', error.message);
+            return [];
+        }
+    }
 }
 
 // Singleton instance

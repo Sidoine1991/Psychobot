@@ -493,6 +493,48 @@ app.get('/oauth/revoke', async (req, res) => {
 });
 
 // ============================================================================
+// ATTACHMENT DOWNLOAD ENDPOINT
+// ============================================================================
+
+// Download attachment endpoint - /download/:token
+app.get('/download/:token', (req, res) => {
+    try {
+        const attachmentManager = require('./src/services/attachmentManager');
+        const { token } = req.params;
+
+        const attachment = attachmentManager.getAttachment(token);
+
+        if (!attachment) {
+            return res.status(404).json({
+                error: 'Attachment not found or expired',
+                message: 'The download link may have expired. Request a new email view.'
+            });
+        }
+
+        // Set appropriate headers
+        res.setHeader('Content-Type', attachment.mimeType);
+        res.setHeader('Content-Disposition', `attachment; filename="${attachment.filename}"`);
+        res.setHeader('Content-Length', attachment.size);
+
+        // Send file
+        res.sendFile(attachment.filePath, (err) => {
+            if (err) {
+                console.error('[Download] Error sending file:', err.message);
+                if (!res.headersSent) {
+                    res.status(500).json({ error: 'Failed to download file' });
+                }
+            } else {
+                console.log('[Download] File sent:', attachment.filename);
+            }
+        });
+
+    } catch (error) {
+        console.error('[Download] Error:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ============================================================================
 
 // Logout endpoint — disconnect and force new QR
 app.get('/logout', (req, res) => {
