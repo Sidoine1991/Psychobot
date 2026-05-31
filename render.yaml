@@ -1,14 +1,31 @@
 services:
   - type: web
-    name: psychobot-v2
-    env: docker
-    region: oregon
-    plan: free
-    healthCheckPath: /
+    name: psychobot-api
+    runtime: node
+    plan: standard
+    startCommand: npm install && npm start
+    buildCommand: npm install && cd frontend && npm install && npm run build && cd ..
     envVars:
-      - key: PORT
-        value: 10000
-      - key: GROQ_API_KEY
+      - key: NODE_ENV
+        value: production
+      - key: API_PORT
+        value: 3000
+      - key: SUPABASE_URL
         sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: CORS_ORIGIN
+        value: https://psychobot.onrender.com
 
-
+  - type: static_site
+    name: psychobot
+    staticPublishPath: ./frontend/build
+    buildCommand: cd frontend && npm install && npm run build
+    routes:
+      - path: /api
+        destination: https://psychobot-api.onrender.com/api
+      - path: /*
+        destination: /index.html
+    envVars:
+      - key: REACT_APP_API_URL
+        value: https://psychobot-api.onrender.com
