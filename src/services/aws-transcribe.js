@@ -1,5 +1,5 @@
 /**
- * PsychoBot AWS Transcribe Integration
+ * KolaBoT AWS Transcribe Integration
  * Uses AWS Bedrock credentials for audio transcription (free alternative to OpenAI)
  *
  * Installation:
@@ -96,7 +96,7 @@ class AWSTranscribeProcessor {
 
     /**
      * Convert audio to PCM format required by AWS Transcribe
-     * Uses ffmpeg (already installed in PsychoBot)
+     * Uses ffmpeg (already installed in KolaBoT)
      */
     async convertToPCM(audioBuffer, originalPath) {
         const ffmpeg = require('fluent-ffmpeg');
@@ -158,7 +158,7 @@ class AWSTranscribeProcessor {
 }
 
 /**
- * Integration function for PsychoBot audioProcessor.js
+ * Integration function for KolaBoT audioProcessor.js
  * Drop-in replacement for OpenAI Whisper transcription
  */
 async function transcribeAudioAWS(audioFilePath, language = 'fr-FR') {
@@ -187,7 +187,7 @@ module.exports = {
 };
 
 /**
- * USAGE IN PSYCHOBOT audioProcessor.js:
+ * USAGE IN KOLABOT audioProcessor.js:
  *
  * Replace OpenAI Whisper call with:
  *

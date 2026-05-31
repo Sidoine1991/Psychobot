@@ -1,5 +1,5 @@
 /**
- * Audio Processor Service for Psychobot
+ * Audio Processor Service for KolaBoT
  * Handles: Download → Transcribe → Generate AI Response → Convert to Audio → Send
  */
 const axios = require('axios');
