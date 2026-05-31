@@ -156,10 +156,14 @@ class JobOrchestrator {
             message += `🏢 ${job.company}\n`;
             message += `📍 ${job.location}\n`;
             message += `💼 ${job.type} | 📱 ${job.remote ? 'Remote' : 'On-site'}\n`;
-            message += `✅ Matching: *${match.fitPercentage}%*\n`;
 
-            const topSkills = match.analysis.strengths.slice(0, 2).join(', ');
-            message += `🎯 Points forts: ${topSkills}\n`;
+            // Use new A-F scoring if available, fallback to old %
+            const scoreDisplay = match.overall_score
+                ? `${match.overall_score} (${match.numeric_score}/100)`
+                : `${match.fitPercentage}%`;
+
+            message += `✅ Score: *${scoreDisplay}*\n`;
+            message += `${match.recommendation?.emoji} ${match.recommendation?.text}\n`;
 
             message += `🔗 ${job.url}\n\n`;
         });
@@ -184,7 +188,6 @@ class JobOrchestrator {
 
         const job = item.job;
         const match = item.match;
-        const letter = item.letter.substring(0, 500); // Preview
 
         let message = `📄 *${job.title}*\n`;
         message += `━━━━━━━━━━━━━━━━━━━━\n\n`;
@@ -194,16 +197,59 @@ class JobOrchestrator {
         message += `💼 ${job.type} | 🌐 ${job.remote ? 'Remote' : 'On-site'}\n`;
         message += `📅 Publié: ${new Date(job.postedDate).toLocaleDateString('fr-FR')}\n\n`;
 
-        message += `**MATCHING:**\n`;
-        message += `✅ Score: ${match.fitPercentage}%\n`;
-        message += `🎯 Compétences: ${match.analysis.strengths.join(', ')}\n`;
-        message += `⚠️ À développer: ${match.analysis.gaps.join(', ')}\n\n`;
+        // SCORING SECTION - with new 10-dimension system
+        if (match.overall_score) {
+            message += `**📊 CAREER-OPS SCORING (A-F)**\n`;
+            message += `━━━━━━━━━━━━━━━━━━━━\n`;
+            message += `*Overall Score: ${match.overall_score} (${match.numeric_score}/100)*\n`;
+            message += `${match.recommendation?.emoji} ${match.recommendation?.text}\n\n`;
 
-        message += `**DESCRIPTION:**\n`;
-        message += `${job.description.substring(0, 300)}...\n\n`;
+            message += `**10 Dimensions:**\n`;
+
+            const dims = match.dimensions;
+            const order = [
+                'cv_match',
+                'role_clarity',
+                'level_strategy',
+                'comp_research',
+                'growth',
+                'interview_prep',
+                'location_fit',
+                'sector_alignment',
+                'team_dynamics',
+                'life_integration'
+            ];
+
+            order.forEach(dimKey => {
+                const dim = dims[dimKey];
+                if (dim) {
+                    const barLength = Math.round(dim.score / 10);
+                    const bar = '█'.repeat(Math.floor(barLength)) + '░'.repeat(10 - Math.floor(barLength));
+
+                    const label = dimKey
+                        .split('_')
+                        .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+                        .join(' ');
+
+                    message += `${label}: ${bar} ${dim.score}\n`;
+                    message += `  └─ ${dim.reason}\n`;
+                }
+            });
+
+            message += `\n`;
+        } else {
+            // Fallback to old format
+            message += `**MATCHING:**\n`;
+            message += `✅ Score: ${match.fitPercentage}%\n`;
+            message += `🎯 Compétences: ${match.analysis.strengths.join(', ')}\n`;
+            message += `⚠️ À développer: ${match.analysis.gaps.join(', ')}\n\n`;
+        }
+
+        message += `**DESCRIPTION (résumé):**\n`;
+        message += `${job.description.substring(0, 250)}...\n\n`;
 
         message += `🔗 Lien: ${job.url}\n`;
-        message += `📝 Lettre générée: ${item.document.filename}\n\n`;
+        message += `📝 Document: ${item.document?.filename || 'En cours de génération...'}\n\n`;
 
         message += `⏭️ !jobs letter ${index + 1} - Télécharger la lettre`;
 

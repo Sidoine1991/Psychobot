@@ -60,10 +60,14 @@ Localisation: ${job.location}
 Type: ${job.type}
 Description: ${job.description.substring(0, 500)}...
 
-**RÉSUMÉ DU MATCHING:**
-- Score: ${match.fitPercentage}%
-- Points forts: ${match.analysis.strengths.join(', ')}
-- À développer: ${match.analysis.gaps.join(', ')}
+**RÉSUMÉ DU MATCHING (CAREER-OPS SCORING):**
+- Overall Score: ${match.overall_score || match.fitPercentage + '%'}
+- Recommendation: ${match.recommendation?.text || 'À analyser'}
+- CV Match: ${match.dimensions?.cv_match?.score || 'N/A'}/100
+- Role Clarity: ${match.dimensions?.role_clarity?.score || 'N/A'}/100
+- Growth Potential: ${match.dimensions?.growth?.score || 'N/A'}/100
+${match.analysis?.strengths ? `- Points forts: ${match.analysis.strengths.join(', ')}` : ''}
+${match.analysis?.gaps ? `- À développer: ${match.analysis.gaps.join(', ')}` : ''}
 
 Génère une lettre de motivation personnalisée qui:
 1. S'adresse directement à l'entreprise/poste

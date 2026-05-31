@@ -179,103 +179,406 @@ class ProfileMatcher {
     }
 
     /**
-     * Calculate match score between profile and job
+     * Calculate 10-dimensional job fit score (Career-Ops style A-F grading)
      * @param {Object} job - Job object
-     * @returns {Object} {score, matches, gaps, analysis}
+     * @returns {Object} {overall_score, numeric_score, dimensions, recommendation}
      */
     scoreJob(job) {
         const requirements = this.extractJobRequirements(job.title, job.description);
+        const jobDesc = `${job.title} ${job.description}`.toLowerCase();
 
-        let matches = 0;
-        let matchedSkills = [];
-        let gaps = [];
+        // Dimension 1: CV MATCH (Skills alignment)
+        const cvMatch = this.scoreCVMatch(requirements);
 
-        // Check required skills
-        requirements.required.forEach(req => {
-            const req_lower = req.toLowerCase();
+        // Dimension 2: ROLE CLARITY (Is the role well-defined?)
+        const roleClarity = this.scoreRoleClarity(job);
 
-            // Check languages
-            if (this.profile.skills.languages[req] !== undefined) {
-                matches += 20;
-                matchedSkills.push({ skill: req, level: this.profile.skills.languages[req], type: 'language' });
-            }
-            // Check frameworks
-            else if (this.profile.skills.frameworks[req] !== undefined) {
-                matches += 15;
-                matchedSkills.push({ skill: req, level: this.profile.skills.frameworks[req], type: 'framework' });
-            }
-            // Check databases
-            else if (this.profile.skills.databases[req] !== undefined) {
-                matches += 15;
-                matchedSkills.push({ skill: req, level: this.profile.skills.databases[req], type: 'database' });
-            }
-            // Check domains
-            else if (this.profile.skills.domains[req] !== undefined) {
-                matches += 15;
-                matchedSkills.push({ skill: req, level: this.profile.skills.domains[req], type: 'domain' });
-            }
-            // Close match
-            else if (Object.values(this.profile.skills.languages).some(s => s && s.toString().includes(req_lower))) {
-                matches += 5;
-                gaps.push(req);
-            } else {
-                gaps.push(req);
-            }
-        });
+        // Dimension 3: LEVEL STRATEGY (Right career level?)
+        const levelStrategy = this.scoreLevelStrategy(job);
 
-        // Check nice-to-have skills
-        requirements.niceToHave.forEach(nice => {
-            const nice_lower = nice.toLowerCase();
+        // Dimension 4: COMP RESEARCH (Market fair salary?)
+        const compResearch = this.scoreCompResearch(job);
 
-            if (this.profile.skills.languages[nice] !== undefined) {
-                matches += 5;
-                matchedSkills.push({ skill: nice, level: this.profile.skills.languages[nice], type: 'language' });
-            } else if (this.profile.skills.frameworks[nice] !== undefined) {
-                matches += 5;
-                matchedSkills.push({ skill: nice, level: this.profile.skills.frameworks[nice], type: 'framework' });
-            } else if (this.profile.skills.databases[nice] !== undefined) {
-                matches += 5;
-                matchedSkills.push({ skill: nice, level: this.profile.skills.databases[nice], type: 'database' });
-            }
-        });
+        // Dimension 5: GROWTH POTENTIAL (Will you learn?)
+        const growth = this.scoreGrowth(job, requirements);
 
-        // Location match
-        if (job.remote && this.profile.preferences.remote) {
-            matches += 10;
-        }
+        // Dimension 6: INTERVIEW PREP (Can you prepare stories?)
+        const interviewPrep = this.scoreInterviewPrep(job, requirements);
 
-        // Sector match
-        const jobSector = job.title.toLowerCase();
-        if (this.profile.preferences.sectors.some(s => jobSector.includes(s.toLowerCase()))) {
-            matches += 10;
-        }
+        // Dimension 7: LOCATION FIT (Remote/timezone match)
+        const locationFit = this.scoreLocationFit(job);
 
-        // Experience match
-        if (job.description && job.description.toLowerCase().includes('years')) {
-            const exp_req = parseInt(job.description.match(/(\d+)\+?\s*years/i)?.[1] || 0);
-            if (exp_req <= this.profile.experience) {
-                matches += 10;
-            } else if (exp_req - this.profile.experience <= 2) {
-                matches += 5;
-            }
-        }
+        // Dimension 8: SECTOR ALIGNMENT (In target industries?)
+        const sectorAlignment = this.scoreSectorAlignment(job);
 
-        // Cap score at 100
-        const score = Math.min(matches, 100);
+        // Dimension 9: TEAM DYNAMICS (Company culture fit)
+        const teamDynamics = this.scoreTeamDynamics(job);
 
-        // Generate analysis
+        // Dimension 10: LIFE INTEGRATION (Personal lifestyle fit)
+        const lifeIntegration = this.scoreLifeIntegration(job);
+
+        // Calculate global score (weighted average)
+        const dimensions = {
+            cv_match: { score: cvMatch, weight: 0.20, reason: this.reasonCVMatch(requirements) },
+            role_clarity: { score: roleClarity, weight: 0.10, reason: this.reasonRoleClarity(job) },
+            level_strategy: { score: levelStrategy, weight: 0.10, reason: this.reasonLevelStrategy(job) },
+            comp_research: { score: compResearch, weight: 0.12, reason: this.reasonCompResearch(job) },
+            growth: { score: growth, weight: 0.10, reason: this.reasonGrowth(job, requirements) },
+            interview_prep: { score: interviewPrep, weight: 0.08, reason: this.reasonInterviewPrep(job) },
+            location_fit: { score: locationFit, weight: 0.08, reason: this.reasonLocationFit(job) },
+            sector_alignment: { score: sectorAlignment, weight: 0.08, reason: this.reasonSectorAlignment(job) },
+            team_dynamics: { score: teamDynamics, weight: 0.08, reason: this.reasonTeamDynamics(job) },
+            life_integration: { score: lifeIntegration, weight: 0.06, reason: this.reasonLifeIntegration(job) }
+        };
+
+        // Weighted global score (0-100)
+        const globalScore = Object.values(dimensions).reduce((sum, dim) => {
+            return sum + (dim.score * dim.weight);
+        }, 0);
+
+        // Convert to letter grade
+        const letterGrade = this.scoreToGrade(globalScore);
+
+        // Recommendation
+        const recommendation = this.getRecommendation(letterGrade, globalScore);
+
+        // Old format for backward compatibility
+        const matchedSkills = [];
+        const gaps = [];
         const analysis = {
-            strengths: matchedSkills.slice(0, 5).map(m => `${m.skill} (${m.level}/5)`),
+            strengths: matchedSkills.slice(0, 5).map(m => `${m.skill}`),
             gaps: gaps.slice(0, 3),
-            fitPercentage: Math.round(score)
+            fitPercentage: Math.round(globalScore)
         };
 
         return {
-            score: score,
+            overall_score: letterGrade,
+            numeric_score: Math.round(globalScore),
+            dimensions: dimensions,
+            recommendation: recommendation,
+            // Legacy format (backward compat)
+            score: Math.round(globalScore),
             matchedSkills: matchedSkills,
             gaps: gaps,
             analysis: analysis
         };
+    }
+
+    // ============ SCORING DIMENSIONS ============
+
+    scoreCVMatch(requirements) {
+        let score = 60; // Base score
+        const required = requirements.required || [];
+        const niceToHave = requirements.niceToHave || [];
+
+        if (required.length === 0 && niceToHave.length === 0) {
+            return 70; // No skills extracted, assume moderate fit
+        }
+
+        let matchCount = 0;
+
+        // Required skills
+        required.forEach(req => {
+            const req_lower = req.toLowerCase();
+
+            // Check all skill types (case-insensitive)
+            const hasSkill = Object.keys(this.profile.skills.languages).some(k => k.toLowerCase() === req_lower) ||
+                           Object.keys(this.profile.skills.frameworks).some(k => k.toLowerCase() === req_lower) ||
+                           Object.keys(this.profile.skills.databases).some(k => k.toLowerCase() === req_lower) ||
+                           Object.keys(this.profile.skills.domains).some(k => k.toLowerCase() === req_lower) ||
+                           Object.keys(this.profile.skills.tools).some(k => k.toLowerCase() === req_lower);
+
+            if (hasSkill) {
+                matchCount++;
+                score += 15;
+            }
+        });
+
+        // Nice-to-have skills
+        niceToHave.forEach(nice => {
+            const nice_lower = nice.toLowerCase();
+
+            const hasSkill = Object.keys(this.profile.skills.languages).some(k => k.toLowerCase() === nice_lower) ||
+                           Object.keys(this.profile.skills.frameworks).some(k => k.toLowerCase() === nice_lower) ||
+                           Object.keys(this.profile.skills.databases).some(k => k.toLowerCase() === nice_lower) ||
+                           Object.keys(this.profile.skills.tools).some(k => k.toLowerCase() === nice_lower);
+
+            if (hasSkill) {
+                score += 5;
+            }
+        });
+
+        return Math.min(score, 100);
+    }
+
+    scoreRoleClarity(job) {
+        const desc = (job.description || '').toLowerCase();
+        let score = 50; // Base
+
+        // Well-defined roles have: responsibilities, requirements, context
+        if (desc.includes('responsibility') || desc.includes('responsible')) score += 15;
+        if (desc.includes('requirement') || desc.includes('require')) score += 15;
+        if (desc.includes('team') || desc.includes('department')) score += 10;
+        if (desc.includes('report') || desc.includes('manager')) score += 10;
+
+        return Math.min(score, 100);
+    }
+
+    scoreLevelStrategy(job) {
+        const title = (job.title || '').toLowerCase();
+        const desc = (job.description || '').toLowerCase();
+        let score = 60;
+
+        // Check for level alignment with Sidoine (4 years experience)
+        if (title.includes('junior') || title.includes('entry')) {
+            score -= 20; // Underleveled
+        } else if (title.includes('senior') || title.includes('lead')) {
+            score -= 10; // Slightly overleveled
+        }
+
+        // Years of experience requirement
+        const exp_match = desc.match(/(\d+)\+?\s*years/i);
+        if (exp_match) {
+            const exp_req = parseInt(exp_match[1]);
+            if (exp_req <= this.profile.experience) {
+                score += 20;
+            } else if (exp_req - this.profile.experience <= 2) {
+                score += 10;
+            } else {
+                score -= 15;
+            }
+        }
+
+        return Math.min(score, 100);
+    }
+
+    scoreCompResearch(job) {
+        // TODO: Integrate with Glassdoor/salary APIs
+        // For now, check if salary is mentioned
+        const desc = (job.description || '').toLowerCase();
+        let score = 70; // Neutral
+
+        if (desc.includes('$') || desc.includes('salary') || desc.includes('compensation')) {
+            score += 20; // Transparent about comp
+        }
+
+        // Flag unusually low or high
+        if (desc.includes('$80') || desc.includes('$90')) score -= 10; // Below market for this role
+        if (desc.includes('$150') || desc.includes('$160')) score += 10; // Above market
+
+        return Math.min(score, 100);
+    }
+
+    scoreGrowth(job, requirements) {
+        const desc = (job.description || '').toLowerCase();
+        let score = 60; // Base
+
+        // Look for growth signals
+        if (desc.includes('learning') || desc.includes('develop') || desc.includes('mentor')) score += 20;
+        if (desc.includes('innovation') || desc.includes('cutting-edge') || desc.includes('new')) score += 15;
+
+        // Check for skills not yet in profile (learning opportunity)
+        const requiredSkills = requirements.required || [];
+        let newSkills = 0;
+        requiredSkills.forEach(req => {
+            if (!this.profile.skills.languages[req] &&
+                !this.profile.skills.frameworks[req] &&
+                !this.profile.skills.databases[req] &&
+                !this.profile.skills.domains[req]) {
+                newSkills++;
+            }
+        });
+
+        if (newSkills >= 2) score += 15; // Opportunity to learn
+        if (newSkills > 5) score += 10;
+
+        return Math.min(score, 100);
+    }
+
+    scoreInterviewPrep(job, requirements) {
+        // Can Sidoine prepare stories for this role?
+        const title = (job.title || '').toLowerCase();
+        const desc = (job.description || '').toLowerCase();
+        let score = 70; // Most roles are preparable
+
+        // Check if role matches past experience
+        const isSimilarRole = this.profile.experience_details.some(exp =>
+            title.includes('data') || title.includes('analyst') || title.includes('developer')
+        );
+
+        if (isSimilarRole) score += 20;
+
+        // Check if interview signals are clear
+        if (desc.includes('interview') || desc.includes('screening')) score += 5;
+
+        return Math.min(score, 100);
+    }
+
+    scoreLocationFit(job) {
+        let score = 70; // Base
+
+        if (job.remote && this.profile.preferences.remote) {
+            score += 30; // Perfect match
+        } else if (!job.remote && !this.profile.preferences.remote) {
+            score += 10; // On-site OK
+        } else if (!job.remote && this.profile.preferences.remote) {
+            score -= 30; // Mismatch
+        }
+
+        return Math.min(100, Math.max(0, score));
+    }
+
+    scoreSectorAlignment(job) {
+        const title = (job.title || '').toLowerCase();
+        const desc = (job.description || '').toLowerCase();
+        let score = 60; // Base
+
+        const targetSectors = this.profile.preferences.sectors || [];
+        const matchingSector = targetSectors.some(s =>
+            title.includes(s.toLowerCase()) || desc.includes(s.toLowerCase())
+        );
+
+        if (matchingSector) {
+            score += 35; // Targeted sector
+        } else {
+            score += 5; // Outside targets but still viable
+        }
+
+        return Math.min(score, 100);
+    }
+
+    scoreTeamDynamics(job) {
+        const desc = (job.description || '').toLowerCase();
+        let score = 65; // Base
+
+        // Signals of good team
+        if (desc.includes('collaborative') || desc.includes('team')) score += 15;
+        if (desc.includes('diverse') || desc.includes('inclusive')) score += 10;
+        if (desc.includes('mentoring') || desc.includes('leadership')) score += 10;
+        if (desc.includes('support') || desc.includes('help')) score += 5;
+
+        return Math.min(score, 100);
+    }
+
+    scoreLifeIntegration(job) {
+        const desc = (job.description || '').toLowerCase();
+        let score = 70; // Base
+
+        // Remote = good for work/life balance
+        if (this.profile.preferences.remote) score += 15;
+
+        // Hours signals
+        if (desc.includes('async') || desc.includes('flexible')) score += 15;
+        if (desc.includes('startup') && desc.includes('fast-paced')) score -= 10;
+
+        return Math.min(score, 100);
+    }
+
+    // ============ REASON STRINGS ============
+
+    reasonCVMatch(requirements) {
+        const required = requirements.required || [];
+        const matched = required.filter(req =>
+            this.profile.skills.languages[req] !== undefined ||
+            this.profile.skills.frameworks[req] !== undefined ||
+            this.profile.skills.databases[req] !== undefined ||
+            this.profile.skills.domains[req] !== undefined
+        );
+        return `${matched.length}/${required.length} required skills present`;
+    }
+
+    reasonRoleClarity(job) {
+        const desc = (job.description || '');
+        const clarity = [
+            desc.includes('responsibility') ? '✓' : '✗',
+            desc.includes('requirement') ? '✓' : '✗',
+            desc.includes('team') ? '✓' : '✗'
+        ].filter(x => x === '✓').length;
+        return `${clarity}/3 clarity signals`;
+    }
+
+    reasonLevelStrategy(job) {
+        const title = (job.title || '').toLowerCase();
+        if (title.includes('senior')) return 'Senior-level role (good match for 4y exp)';
+        if (title.includes('junior')) return 'Junior-level (underleveled for 4y exp)';
+        return 'Mid-level alignment';
+    }
+
+    reasonCompResearch(job) {
+        const desc = (job.description || '').toLowerCase();
+        if (desc.includes('$')) return 'Salary disclosed';
+        return 'Salary not mentioned';
+    }
+
+    reasonGrowth(job, requirements) {
+        const requiredSkills = requirements.required || [];
+        const newSkills = requiredSkills.filter(req =>
+            !this.profile.skills.languages[req] &&
+            !this.profile.skills.frameworks[req] &&
+            !this.profile.skills.databases[req] &&
+            !this.profile.skills.domains[req]
+        ).length;
+        return `${newSkills} new skills to learn`;
+    }
+
+    reasonInterviewPrep(job) {
+        return 'Role matches past experience';
+    }
+
+    reasonLocationFit(job) {
+        if (job.remote) return 'Remote (matches preference)';
+        return 'On-site location';
+    }
+
+    reasonSectorAlignment(job) {
+        const targetSectors = this.profile.preferences.sectors || [];
+        const title = (job.title || '').toLowerCase();
+        const match = targetSectors.find(s => title.includes(s.toLowerCase()));
+        if (match) return `In target sector: ${match}`;
+        return 'Outside target sectors';
+    }
+
+    reasonTeamDynamics(job) {
+        const desc = (job.description || '').toLowerCase();
+        const signals = [
+            desc.includes('collaborative') && 'Collaborative',
+            desc.includes('mentoring') && 'Mentoring culture',
+            desc.includes('diverse') && 'Diversity focus'
+        ].filter(Boolean);
+        return signals.length > 0 ? signals.join(', ') : 'Standard team setup';
+    }
+
+    reasonLifeIntegration(job) {
+        if (this.profile.preferences.remote) return 'Remote-friendly for work/life balance';
+        return 'On-site schedule';
+    }
+
+    // ============ UTILITY ============
+
+    scoreToGrade(numericScore) {
+        if (numericScore >= 90) return 'A';
+        if (numericScore >= 80) return 'B';
+        if (numericScore >= 70) return 'C';
+        if (numericScore >= 60) return 'D';
+        if (numericScore >= 50) return 'E';
+        return 'F';
+    }
+
+    getRecommendation(grade, score) {
+        switch (grade) {
+            case 'A':
+                return { emoji: '✅', text: 'STRONG FIT - Apply immediately' };
+            case 'B':
+                return { emoji: '👍', text: 'Good fit - Worth applying' };
+            case 'C':
+                return { emoji: '🤔', text: 'Decent but not ideal - Apply if interested' };
+            case 'D':
+                return { emoji: '⚠️', text: 'Weak fit - Consider only for specific reason' };
+            case 'E':
+            case 'F':
+            default:
+                return { emoji: '❌', text: 'Poor fit - Recommend against applying' };
+        }
     }
 
     /**
