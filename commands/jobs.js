@@ -9,6 +9,7 @@
  */
 
 const jobOrchestrator = require('../src/services/jobOrchestrator');
+const interviewPrepService = require('../src/services/interviewPrepService');
 
 module.exports = {
     name: 'jobs',
@@ -87,7 +88,7 @@ module.exports = {
                 message += `━━━━━━━━━━━━━━━━━━━━\n\n`;
                 message += `Offre: ${jobItem.job.title}\n`;
                 message += `Entreprise: ${jobItem.job.company}\n`;
-                message += `Matching: ${jobItem.match.fitPercentage}%\n\n`;
+                message += `Score: ${jobItem.match.overall_score || jobItem.match.fitPercentage + '%'}\n\n`;
 
                 message += `**Aperçu:**\n`;
                 message += `${jobItem.letter.substring(0, 300)}...\n\n`;
@@ -98,6 +99,12 @@ module.exports = {
                 message += `⏱️ Le lien expire dans 24h`;
 
                 await sock.sendMessage(remoteJid, { text: message }, { quoted: msg });
+
+                // Send interview prep prompt after 1 second
+                setTimeout(async () => {
+                    const prepPrompt = interviewPrepService.generateStoryPrompt(jobItem.job);
+                    await sock.sendMessage(remoteJid, { text: prepPrompt });
+                }, 1000);
             }
 
             // ACTION 5: Quick apply
