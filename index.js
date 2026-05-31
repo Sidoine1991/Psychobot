@@ -283,6 +283,189 @@ app.get('/new-qr', (req, res) => {
     }
 });
 
+// ============================================================================
+// OAUTH 2.0 ENDPOINTS FOR GMAIL
+// ============================================================================
+
+const googleOAuth = require('./src/integrations/googleOAuth');
+
+// OAuth authorization endpoint - generates Google consent URL
+app.get('/oauth/authorize', (req, res) => {
+    try {
+        console.log(chalk.cyan('[OAuth] Authorization requested'));
+
+        const authUrl = googleOAuth.generateAuthUrl();
+
+        res.send(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>KolaBoT - Gmail Authorization</title>
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <style>
+                    body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; text-align: center; }
+                    h1 { color: #4285f4; }
+                    .button { display: inline-block; padding: 15px 30px; background: #4285f4; color: white; text-decoration: none; border-radius: 5px; margin-top: 20px; font-size: 16px; }
+                    .button:hover { background: #357ae8; }
+                    .info { background: #f1f3f4; padding: 15px; border-radius: 5px; margin-top: 20px; text-align: left; }
+                </style>
+            </head>
+            <body>
+                <h1>🤖 KolaBoT Gmail Authorization</h1>
+                <p>Pour accéder à votre Gmail personnel, KolaBoT a besoin de votre autorisation.</p>
+
+                <div class="info">
+                    <strong>📋 Permissions demandées:</strong>
+                    <ul>
+                        <li>✉️ Lire vos emails</li>
+                        <li>📤 Envoyer des emails</li>
+                        <li>🔍 Rechercher dans Gmail</li>
+                        <li>📇 Accéder à vos contacts</li>
+                    </ul>
+                    <p><small>⚠️ Ces permissions sont nécessaires pour les commandes !inbox, !send, !search, !contacts</small></p>
+                </div>
+
+                <a href="${authUrl}" class="button">🔐 Autoriser l'accès Gmail</a>
+
+                <p style="margin-top: 30px; font-size: 12px; color: #666;">
+                    Vous serez redirigé vers Google pour confirmer l'accès.<br>
+                    KolaBoT ne stocke que le token d'accès, jamais votre mot de passe.
+                </p>
+            </body>
+            </html>
+        `);
+
+    } catch (error) {
+        console.error(chalk.red('[OAuth] Authorization error:', error.message));
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// OAuth callback endpoint - receives authorization code from Google
+app.get('/oauth/callback', async (req, res) => {
+    try {
+        const code = req.query.code;
+        const error = req.query.error;
+
+        if (error) {
+            console.log(chalk.red(`[OAuth] Authorization denied: ${error}`));
+            return res.send(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Authorization Cancelled</title>
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <style>
+                        body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; text-align: center; }
+                        h1 { color: #ea4335; }
+                    </style>
+                </head>
+                <body>
+                    <h1>❌ Autorisation Annulée</h1>
+                    <p>Vous avez refusé l'accès à Gmail.</p>
+                    <p>Les commandes Gmail ne fonctionneront pas sans autorisation.</p>
+                    <p><a href="/oauth/authorize">Réessayer</a></p>
+                </body>
+                </html>
+            `);
+        }
+
+        if (!code) {
+            return res.status(400).json({ error: 'No authorization code received' });
+        }
+
+        console.log(chalk.cyan('[OAuth] Authorization code received, exchanging for tokens...'));
+
+        const tokens = await googleOAuth.getTokenFromCode(code);
+
+        console.log(chalk.green('[OAuth] ✅ Gmail access authorized!'));
+
+        res.send(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Authorization Successful</title>
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <style>
+                    body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; text-align: center; }
+                    h1 { color: #34a853; }
+                    .success-box { background: #e6f4ea; border: 2px solid #34a853; padding: 20px; border-radius: 5px; margin: 20px 0; }
+                    .commands { background: #f1f3f4; padding: 15px; border-radius: 5px; text-align: left; margin-top: 20px; }
+                </style>
+            </head>
+            <body>
+                <h1>✅ Autorisation Réussie!</h1>
+
+                <div class="success-box">
+                    <p><strong>🎉 KolaBoT a maintenant accès à votre Gmail!</strong></p>
+                    <p>Le token d'accès expire le: ${new Date(tokens.expiry_date).toLocaleString('fr-FR')}</p>
+                    <p><small>(Il sera automatiquement renouvelé)</small></p>
+                </div>
+
+                <div class="commands">
+                    <strong>📱 Commandes maintenant disponibles sur WhatsApp:</strong>
+                    <ul>
+                        <li>!inbox - Voir vos emails</li>
+                        <li>!inbox unread - Emails non-lus</li>
+                        <li>!send &lt;email&gt; | &lt;sujet&gt; | &lt;message&gt; - Envoyer email</li>
+                        <li>!search &lt;query&gt; - Rechercher dans Gmail</li>
+                        <li>!contacts - Voir vos contacts</li>
+                    </ul>
+                </div>
+
+                <p style="margin-top: 30px;">
+                    <strong>Vous pouvez fermer cette page</strong><br>
+                    Testez les commandes sur WhatsApp!
+                </p>
+            </body>
+            </html>
+        `);
+
+    } catch (error) {
+        console.error(chalk.red('[OAuth] Callback error:', error.message));
+        res.status(500).send(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Authorization Error</title>
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <style>
+                    body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; text-align: center; }
+                    h1 { color: #ea4335; }
+                </style>
+            </head>
+            <body>
+                <h1>❌ Erreur d'Autorisation</h1>
+                <p>${error.message}</p>
+                <p><a href="/oauth/authorize">Réessayer</a></p>
+            </body>
+            </html>
+        `);
+    }
+});
+
+// OAuth status endpoint - check authorization status
+app.get('/oauth/status', (req, res) => {
+    try {
+        const status = googleOAuth.getStatus();
+        res.json(status);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// OAuth revoke endpoint - revoke access
+app.get('/oauth/revoke', async (req, res) => {
+    try {
+        await googleOAuth.revokeAccess();
+        res.json({ success: true, message: 'Gmail access revoked' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ============================================================================
+
 // Logout endpoint — disconnect and force new QR
 app.get('/logout', (req, res) => {
     try {
@@ -747,6 +930,8 @@ async function startBot() {
 • !planifier <date> <heure> <titre> - Creer evenement
 • !contacts [recherche] - Lister/rechercher contacts
 • !addcontact <nom> <email> <tel> - Ajouter contact
+• !authorize - Autoriser acces Gmail (1ere fois)
+• !gmailstatus - Verifier statut Gmail
 • !inbox [nombre|unread] - Voir emails
 • !send <email> | <sujet> | <message> - Envoyer email
 • !search <query> - Rechercher dans Gmail

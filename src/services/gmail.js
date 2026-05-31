@@ -4,7 +4,7 @@
  */
 
 const { google } = require('googleapis');
-const googleAuth = require('../integrations/googleAuth');
+const googleOAuth = require('../integrations/googleOAuth');
 
 class Gmail {
     constructor() {
@@ -19,10 +19,11 @@ class Gmail {
             return this.gmail;
         }
 
-        const auth = await googleAuth.getAuth();
+        // Use OAuth2 client instead of Service Account
+        const auth = await googleOAuth.getClient();
         this.gmail = google.gmail({ version: 'v1', auth });
 
-        console.log('[Gmail] ✅ Gmail API initialized');
+        console.log('[Gmail] ✅ Gmail API initialized with OAuth');
         return this.gmail;
     }
 

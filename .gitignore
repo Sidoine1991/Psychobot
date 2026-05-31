@@ -4,6 +4,7 @@ node_modules/
 .env
 .env.*
 .env.render
+.oauth-tokens.json
 bot.db
 *.json
 !package.json
