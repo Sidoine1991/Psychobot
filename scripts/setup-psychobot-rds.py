@@ -2,49 +2,73 @@
 
 """
 PsychoBot - Setup RDS Schema
-Uses AWS RDS Helper (same as TradBOT)
 Creates psychobot schema with all tables and indices
+Uses credentials from environment or .env.production
 """
 
 import sys
 import os
+import psycopg2
+from dotenv import load_dotenv
 
-# Add TradBOT services to path (assuming you have aws_rds_helper)
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../src/services'))
+# Load environment variables
+load_dotenv('.env.production')
+load_dotenv()
 
-try:
-    from aws_rds_helper import RDSHelper
-except ImportError:
-    print("❌ Error: Cannot import aws_rds_helper")
-    print("   Make sure you have the TradBOT services available")
-    print("   Expected: src/services/aws_rds_helper.py")
+# Get RDS credentials
+RDS_HOST = os.getenv('AWS_RDS_HOST') or os.getenv('RDS_HOST')
+RDS_PORT = int(os.getenv('AWS_RDS_PORT') or os.getenv('RDS_PORT') or 5432)
+RDS_DATABASE = os.getenv('AWS_RDS_DATABASE') or os.getenv('RDS_DATABASE') or 'psychobot'
+RDS_USER = os.getenv('AWS_RDS_USER') or os.getenv('RDS_USER')
+RDS_PASSWORD = os.getenv('AWS_RDS_PASSWORD') or os.getenv('RDS_PASSWORD')
+RDS_SSLMODE = os.getenv('AWS_RDS_SSLMODE') or os.getenv('RDS_SSLMODE') or 'require'
+
+if not all([RDS_HOST, RDS_USER, RDS_PASSWORD]):
+    print("[ERROR] Missing RDS credentials")
+    print("   Required: AWS_RDS_HOST, AWS_RDS_USER, AWS_RDS_PASSWORD")
+    print("   Set them in .env.production or environment variables")
     sys.exit(1)
+
+def get_connection():
+    """Create RDS connection"""
+    return psycopg2.connect(
+        host=RDS_HOST,
+        port=RDS_PORT,
+        database=RDS_DATABASE,
+        user=RDS_USER,
+        password=RDS_PASSWORD,
+        sslmode=RDS_SSLMODE
+    )
 
 def setup_psychobot_schema():
     """Create PsychoBot schema in RDS"""
 
     print("\n" + "="*60)
-    print("🚀 PsychoBot - AWS RDS Schema Setup")
-    print("="*60 + "\n")
+    print("[SETUP] PsychoBot - AWS RDS Schema Setup")
+    print("="*60)
+    print(f"\nTarget: {RDS_HOST}:{RDS_PORT}/{RDS_DATABASE}")
+    print(f"User: {RDS_USER}\n")
 
+    conn = None
     try:
-        # Initialize RDS connection
-        print("🔌 Connecting to AWS RDS...")
-        rds = RDSHelper()
+        # Connect to RDS
+        print("[INFO] Connecting to AWS RDS...")
+        conn = get_connection()
+        cursor = conn.cursor()
+        print("[OK] Connected to AWS RDS\n")
 
         # Test connection
-        result = rds.execute("SELECT 1 as connected")
-        if result:
-            print("✅ Connected to AWS RDS\n")
+        cursor.execute("SELECT 1")
 
         # Create schema
-        print("📋 Creating psychobot schema...")
-        rds.execute("CREATE SCHEMA IF NOT EXISTS psychobot;")
-        print("✅ Schema created\n")
+        print("[INFO] Creating psychobot schema...")
+        cursor.execute("CREATE SCHEMA IF NOT EXISTS psychobot;")
+        conn.commit()
+        print("[OK] Schema created\n")
 
         # Create applications table
-        print("📋 Creating applications table...")
-        rds.execute("""
+        print("[INFO] Creating applications table...")
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS psychobot.applications (
                 id SERIAL PRIMARY KEY,
                 company VARCHAR(255) NOT NULL,
@@ -58,11 +82,12 @@ def setup_psychobot_schema():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
-        print("✅ applications table created\n")
+        conn.commit()
+        print("[OK] applications table created\n")
 
         # Create stories table
-        print("📋 Creating stories table...")
-        rds.execute("""
+        print("[INFO] Creating stories table...")
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS psychobot.stories (
                 id SERIAL PRIMARY KEY,
                 title VARCHAR(255) NOT NULL,
@@ -77,11 +102,12 @@ def setup_psychobot_schema():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
-        print("✅ stories table created\n")
+        conn.commit()
+        print("[OK] stories table created\n")
 
         # Create job_scores table
-        print("📋 Creating job_scores table...")
-        rds.execute("""
+        print("[INFO] Creating job_scores table...")
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS psychobot.job_scores (
                 id SERIAL PRIMARY KEY,
                 company VARCHAR(255) NOT NULL,
@@ -92,10 +118,11 @@ def setup_psychobot_schema():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
-        print("✅ job_scores table created\n")
+        conn.commit()
+        print("[OK] job_scores table created\n")
 
         # Create indices
-        print("📋 Creating indices for performance...")
+        print("[INFO] Creating indices for performance...")
 
         indices = [
             ("idx_applications_company",
@@ -115,14 +142,15 @@ def setup_psychobot_schema():
         ]
 
         for idx_name, idx_query in indices:
-            rds.execute(idx_query)
-            print(f"   ✅ {idx_name}")
+            cursor.execute(idx_query)
+            conn.commit()
+            print(f"   [OK] {idx_name}")
 
         print()
 
         # Create trigger for updated_at
-        print("📋 Creating updated_at trigger...")
-        rds.execute("""
+        print("[INFO] Creating updated_at trigger...")
+        cursor.execute("""
             CREATE OR REPLACE FUNCTION psychobot.update_updated_at_column()
             RETURNS TRIGGER AS $$
             BEGIN
@@ -130,42 +158,48 @@ def setup_psychobot_schema():
                 RETURN NEW;
             END;
             $$ language 'plpgsql';
-
+        """)
+        cursor.execute("""
             DROP TRIGGER IF EXISTS update_applications_updated_at ON psychobot.applications;
-
+        """)
+        cursor.execute("""
             CREATE TRIGGER update_applications_updated_at BEFORE UPDATE ON psychobot.applications
                 FOR EACH ROW EXECUTE FUNCTION psychobot.update_updated_at_column();
         """)
-        print("✅ Trigger created\n")
+        conn.commit()
+        print("[OK] Trigger created\n")
 
         # Verify tables
-        print("🔍 Verifying schema...")
-        result = rds.execute("""
+        print("[INFO] Verifying schema...")
+        cursor.execute("""
             SELECT table_name
             FROM information_schema.tables
             WHERE table_schema = 'psychobot'
             ORDER BY table_name;
         """)
+        result = cursor.fetchall()
 
         if result:
             print(f"   Found {len(result)} tables:")
             for row in result:
-                print(f"   ✅ {row[0]}")
+                print(f"   [OK] {row[0]}")
             print()
 
         # Count records
-        print("📊 Initial state:")
+        print("[INFO] Initial state:")
 
-        apps_count = rds.execute("SELECT COUNT(*) as count FROM psychobot.applications;")
-        stories_count = rds.execute("SELECT COUNT(*) as count FROM psychobot.stories;")
+        cursor.execute("SELECT COUNT(*) as count FROM psychobot.applications;")
+        apps_count = cursor.fetchone()
+        cursor.execute("SELECT COUNT(*) as count FROM psychobot.stories;")
+        stories_count = cursor.fetchone()
 
         if apps_count:
-            print(f"   Applications: {apps_count[0][0]} records")
+            print(f"   Applications: {apps_count[0]} records")
         if stories_count:
-            print(f"   Stories: {stories_count[0][0]} records")
+            print(f"   Stories: {stories_count[0]} records")
 
         print("\n" + "="*60)
-        print("✅ PsychoBot schema setup complete!")
+        print("[SUCCESS] PsychoBot schema setup complete!")
         print("="*60 + "\n")
 
         print("Next steps:")
@@ -178,7 +212,7 @@ def setup_psychobot_schema():
         return True
 
     except Exception as e:
-        print(f"\n❌ Error: {str(e)}")
+        print(f"\n[ERROR] {str(e)}")
         import traceback
         traceback.print_exc()
         return False
