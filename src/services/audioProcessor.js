@@ -194,8 +194,16 @@ async function textToSpeechGoogle(text, language = 'fr') {
     try {
         console.log(`[AudioProcessor] Converting text to speech (${language})...`);
 
+        // Google TTS limit: 200 characters max
+        // If text is too long, truncate to first 190 chars + "..."
+        let ttsText = text;
+        if (text.length > 200) {
+            ttsText = text.substring(0, 190) + '...';
+            console.log(`[AudioProcessor] Text truncated: ${text.length} → 193 chars for TTS`);
+        }
+
         // Get audio URL from Google TTS
-        const audioUrl = googleTTS.getAudioUrl(text, {
+        const audioUrl = googleTTS.getAudioUrl(ttsText, {
             lang: language,
             slow: false,
             host: 'https://translate.google.com'
