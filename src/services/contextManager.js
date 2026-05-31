@@ -121,7 +121,7 @@ class ContextManager {
     /**
      * Find email by natural reference
      * @param {string} userId - User ID
-     * @param {string} reference - "ça", "cet email", "le dernier", "le premier"
+     * @param {string} reference - "ça", "cet email", "le dernier", "le premier", "9", "email 9"
      * @returns {string|null} Email ID
      */
     resolveEmailReference(userId, reference) {
@@ -130,6 +130,15 @@ class ContextManager {
 
         if (!context.lastEmails || context.lastEmails.length === 0) {
             return null;
+        }
+
+        // Check for numeric reference: "9", "email 9", "le 9", "numero 9"
+        const numberMatch = lowerRef.match(/(\d+)/);
+        if (numberMatch) {
+            const emailNumber = parseInt(numberMatch[1]) - 1; // Convert to 0-based index
+            if (emailNumber >= 0 && emailNumber < context.lastEmails.length) {
+                return context.lastEmails[emailNumber].id;
+            }
         }
 
         // "ça", "cet email", "ce message", "celui-là"

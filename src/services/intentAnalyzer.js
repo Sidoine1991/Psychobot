@@ -92,8 +92,15 @@ Message: "Envoie un email à john@example.com pour dire bonjour"
 Message: "Quel temps fait-il?"
 → {"intent": "none", "confidence": 0.99, "parameters": {}, "reasoning": "Question hors Gmail"}
 
+Message: "Rentre dans l'email 9"
+→ {"intent": "thread", "confidence": 0.92, "parameters": {"target": "9"}, "reasoning": "Lire l'email numéro 9"}
+
+Message: "Ouvre le 3ème"
+→ {"intent": "thread", "confidence": 0.90, "parameters": {"target": "3"}, "reasoning": "Ouvrir le 3ème email de la liste"}
+
 **Important:**
 - Si le message référence "ça", "cet email", "le dernier", utilise lastEmailId du contexte
+- Si le message référence un NUMÉRO (9, le 3, email 5), passe le numéro dans target
 - Si confiance < 0.7, retourne intent: "none"
 - Réponds UNIQUEMENT en JSON valide`;
 
@@ -167,11 +174,24 @@ Message: "Quel temps fait-il?"
             'étoile', 'spam', 'corbeille',
             'principal', 'promotion', 'social',
             'ça', 'cet email', 'ce message',
-            'montre', 'affiche', 'voir'
+            'montre', 'affiche', 'voir', 'lire', 'ouvre',
+            'rentre', 'entre', 'clique', 'ouvrir',
+            'recherche', 'cherche', 'offre d\'emploi'
         ];
 
         const lowerMessage = message.toLowerCase();
-        return gmailKeywords.some(keyword => lowerMessage.includes(keyword));
+
+        // Check keywords
+        if (gmailKeywords.some(keyword => lowerMessage.includes(keyword))) {
+            return true;
+        }
+
+        // Check for numeric references: "9", "email 9", "le 9", "numero 9"
+        if (/\d+/.test(message)) {
+            return true;
+        }
+
+        return false;
     }
 
     /**
