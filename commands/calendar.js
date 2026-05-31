@@ -15,7 +15,7 @@ module.exports = {
     category: 'productivity',
     usage: '!calendar [demain|DD/MM]',
 
-    async execute(sock, msg, args) {
+    async run({ sock, msg, args }) {
         const remoteJid = msg.key.remoteJid;
 
         try {
