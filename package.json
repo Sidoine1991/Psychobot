@@ -48,6 +48,7 @@
   "author": "psycho237-prog",
   "license": "MIT",
   "dependencies": {
+    "@aws-sdk/client-transcribe-streaming": "^3.682.0",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@google/generative-ai": "^0.24.1",
     "@hapi/boom": "^10.0.1",
