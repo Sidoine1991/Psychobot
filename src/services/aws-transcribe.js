@@ -49,7 +49,7 @@ class AWSTranscribeProcessor {
 
             // Create audio stream generator
             const audioStream = async function* () {
-                const chunkSize = 1024 * 32; // 32KB chunks
+                const chunkSize = 1024 * 8; // 8KB chunks (AWS Transcribe limit)
                 for (let i = 0; i < pcmBuffer.length; i += chunkSize) {
                     yield {
                         AudioEvent: {

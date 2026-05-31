@@ -132,13 +132,12 @@ async function transcribeAudioOpenAI(audioPath) {
         }
     }
 
-    // Fallback to OpenAI/NVIDIA
+    // Fallback to OpenAI only (NVIDIA doesn't support audio transcription)
     const providers = [];
     if (OPENAI_API_KEY) providers.push('openai');
-    if (NVIDIA_NIM_API_KEY) providers.push('nvidia');
 
     if (providers.length === 0) {
-        throw new Error('No transcription service available (AWS, OpenAI, or NVIDIA required)');
+        throw new Error('No transcription service available (AWS or OpenAI required)');
     }
 
     for (const provider of providers) {
