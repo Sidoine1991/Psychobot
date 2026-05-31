@@ -31,6 +31,7 @@ const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 const OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct:free";
 
 let lastOwnerActionTime = Date.now();
+let lastDailyWelcomeSent = null; // Track last daily welcome date
 
 async function callLLM(baseUrl, apiKey, model, messages, maxTokens = 1024) {
     const resp = await axios.post(`${baseUrl}/chat/completions`, {
@@ -715,7 +716,16 @@ async function startBot() {
             const user = sock.user.id.split(':')[0];
             broadcast({ type: 'connected', user });
 
-            const msgText = `*✅ SESSION CONNECTEE!*
+            // Check if this is the first connection today
+            const today = new Date().toDateString();
+            const isFirstConnectionToday = lastDailyWelcomeSent !== today;
+
+            if (isFirstConnectionToday) {
+                console.log(chalk.cyan('[Daily Welcome] Sending first-of-day command list...'));
+                lastDailyWelcomeSent = today;
+            }
+
+            const msgText = `*✅ SESSION CONNECTEE!*${isFirstConnectionToday ? ' 🌅 *PREMIERE CONNEXION DU JOUR*' : ''}
 
 🤖 *Bot:* ${BOT_NAME}
 📱 *User:* ${user}
@@ -731,6 +741,11 @@ async function startBot() {
 • !imagine <texte> - Generer une image
 • !sticker - Convertir image en sticker
 • !translate <texte> - Traduction
+
+📅 *Productivite*
+• !calendar [demain|01/06] - Voir agenda
+• !planifier <date> <heure> <titre> - Creer evenement
+  Exemple: !planifier demain 10h Reunion client
 
 🎮 *Jeux & Fun*
 • !guess - Jeu devinette
@@ -756,7 +771,7 @@ async function startBot() {
 • !session - Info session
 • !transcript - Transcrire audio
 
-Type !help pour plus de details!`;
+${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨' : 'Type !help pour plus de details!'}`;
             await sock.sendMessage(sock.user.id, { text: msgText });
 
             // Critical: Force an immediate sync on first successful connection to ensure SESSION_DATA is populated on Render
