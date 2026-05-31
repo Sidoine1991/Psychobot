@@ -572,6 +572,44 @@ app.get('/download/doc/:token', (req, res) => {
     }
 });
 
+// Export download endpoint - /download/export/:token
+app.get('/download/export/:token', (req, res) => {
+    try {
+        const quickWinsService = require('./src/services/quickWinsService');
+        const { token } = req.params;
+
+        const exportFile = quickWinsService.getExport(token);
+
+        if (!exportFile) {
+            return res.status(404).json({
+                error: 'Export not found',
+                message: 'The download link may have expired.'
+            });
+        }
+
+        // Set CSV headers
+        res.setHeader('Content-Type', exportFile.mimeType);
+        res.setHeader('Content-Disposition', `attachment; filename="${exportFile.filename}"`);
+        res.setHeader('Content-Length', exportFile.size);
+
+        // Send file
+        res.sendFile(exportFile.filepath, (err) => {
+            if (err) {
+                console.error('[ExportDownload] Error:', err.message);
+                if (!res.headersSent) {
+                    res.status(500).json({ error: 'Failed to download export' });
+                }
+            } else {
+                console.log('[ExportDownload] Sent:', exportFile.filename);
+            }
+        });
+
+    } catch (error) {
+        console.error('[ExportDownload] Error:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // ============================================================================
 
 // Logout endpoint — disconnect and force new QR
