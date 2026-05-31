@@ -11,12 +11,18 @@ const ffmpegPath = require('ffmpeg-static');
 const googleTTS = require('google-tts-api');
 const { convertToOpus } = require('../lib/audioHelper');
 
+// AWS Transcribe integration (uses existing AWS Bedrock credentials)
+const { transcribeAudioAWS } = require('./aws-transcribe');
+
 ffmpeg.setFfmpegPath(ffmpegPath);
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const NVIDIA_NIM_API_KEY = process.env.NVIDIA_NIM_API_KEY || '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';
 const NVIDIA_NIM_BASE = 'https://integrate.api.nvidia.com/v1';
 const NVIDIA_NIM_MODEL = process.env.NVIDIA_NIM_MODEL || 'meta/llama-3.3-70b-instruct';
+
+// Check if AWS credentials are available
+const AWS_AVAILABLE = process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY;
 
 /**
  * Download audio from WhatsApp and save locally
@@ -106,13 +112,33 @@ async function transcribeWithProvider(audioPath, provider) {
     throw new Error(`Unknown provider: ${provider}`);
 }
 
+/**
+ * Main transcription function with AWS Transcribe priority
+ * Tries AWS first (free tier), then OpenAI/NVIDIA as fallback
+ */
 async function transcribeAudioOpenAI(audioPath) {
+    // Try AWS Transcribe first (free tier available)
+    if (AWS_AVAILABLE) {
+        try {
+            console.log('[AudioProcessor] Trying AWS Transcribe (free tier)...');
+            const awsResult = await transcribeAudioAWS(audioPath, 'fr-FR');
+            if (awsResult.success) {
+                console.log(`[AudioProcessor] AWS Transcribed: "${awsResult.text}"`);
+                return awsResult.text;
+            }
+            console.warn(`[AudioProcessor] AWS failed: ${awsResult.error}`);
+        } catch (error) {
+            console.warn(`[AudioProcessor] AWS Transcribe error: ${error.message} — trying fallback...`);
+        }
+    }
+
+    // Fallback to OpenAI/NVIDIA
     const providers = [];
     if (OPENAI_API_KEY) providers.push('openai');
     if (NVIDIA_NIM_API_KEY) providers.push('nvidia');
 
     if (providers.length === 0) {
-        throw new Error('Neither OPENAI_API_KEY nor NVIDIA_NIM_API_KEY configured');
+        throw new Error('No transcription service available (AWS, OpenAI, or NVIDIA required)');
     }
 
     for (const provider of providers) {
