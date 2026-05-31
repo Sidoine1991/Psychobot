@@ -23,6 +23,11 @@ const { setOwnerActive, isConversationActive, updateUserMessageType, shouldAutoR
 const { detectMessageType } = require('./src/handlers/messageClassifier');
 const { getAutoReplyTemplate, formatReplyForWhatsApp } = require('./src/handlers/autoReplyTemplates');
 
+// Natural Language Command Router
+const intentAnalyzer = require('./src/services/intentAnalyzer');
+const contextManager = require('./src/services/contextManager');
+const commandExecutor = require('./src/services/commandExecutor');
+
 const NVIDIA_NIM_API_KEY = process.env.NVIDIA_NIM_API_KEY || "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";
 const NVIDIA_NIM_BASE = "https://integrate.api.nvidia.com/v1";
 const NVIDIA_NIM_MODEL = process.env.NVIDIA_NIM_MODEL || "meta/llama-3.3-70b-instruct";
@@ -198,6 +203,29 @@ function loadCommands() {
             console.error(chalk.red(`❌ Erreur chargement ${file}:`), err.message);
         }
     });
+
+    // Register Gmail commands for natural language processing
+    const gmailCommands = {
+        'inbox': commands.get('inbox'),
+        'delete': commands.get('delete'),
+        'archive': commands.get('archive'),
+        'spam': commands.get('spam'),
+        'star': commands.get('star'),
+        'unstar': commands.get('unstar'),
+        'primary': commands.get('primary'),
+        'social': commands.get('social'),
+        'promotions': commands.get('promotions'),
+        'updates': commands.get('updates'),
+        'thread': commands.get('thread'),
+        'search': commands.get('search'),
+        'send': commands.get('send'),
+        'compose': commands.get('compose')
+    };
+
+    // Register with command executor
+    commandExecutor.registerCommands(gmailCommands);
+
+    console.log(chalk.cyan('[Natural Language] Command executor initialized with Gmail commands'));
 }
 
 // --- Express App (Immediate Port Binding) ---
@@ -1316,6 +1344,53 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
             }
         }
 
+        // ============================================================================
+        // NATURAL LANGUAGE COMMAND PROCESSING
+        // ============================================================================
+
+        // If not a command (!), try natural language processing
+        if (!text.startsWith(PREFIX) && text.length > 3) {
+            const userId = remoteJid;
+
+            try {
+                const result = await commandExecutor.processMessage(
+                    text,
+                    { sock, msg },
+                    userId
+                );
+
+                // If a command was executed, skip normal AI processing
+                if (result.executed) {
+                    console.log('[Natural Language] Command executed:', result.intent);
+
+                    // Update context if it was an inbox command
+                    if (result.command === 'inbox') {
+                        const session = userSession.getSession(userId);
+                        if (session.gmail.emails.length > 0) {
+                            contextManager.updateLastEmails(userId, session.gmail.emails);
+                            contextManager.updateNavigation(userId, {
+                                currentPage: session.gmail.currentPage,
+                                category: session.gmail.category
+                            });
+                        }
+                    }
+
+                    return; // Skip normal message processing
+                }
+
+                // If not executed but analyzed, log for debugging
+                if (result.intent !== 'none') {
+                    console.log('[Natural Language] Intent detected but not executed:', result.intent, result.reason);
+                }
+
+            } catch (error) {
+                console.error('[Natural Language] Processing error:', error.message);
+                // Continue to normal processing if NL fails
+            }
+        }
+
+        // ============================================================================
+
         // Command Handling
         if (text.startsWith(PREFIX)) {
             const args = text.slice(PREFIX.length).trim().split(/ +/);
@@ -1352,6 +1427,19 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
                     };
                     // Provide group sets for state management
                     await command.run({ sock, msg, commands, replyWithTag, args, antilinkGroups, antideleteGroups });
+
+                    // Update context for Gmail commands
+                    const userId = remoteJid;
+                    if (['inbox', 'primary', 'social', 'promotions', 'updates'].includes(commandName)) {
+                        const session = userSession.getSession(userId);
+                        if (session.gmail.emails.length > 0) {
+                            contextManager.updateLastEmails(userId, session.gmail.emails);
+                            contextManager.updateNavigation(userId, {
+                                currentPage: session.gmail.currentPage,
+                                category: session.gmail.category
+                            });
+                        }
+                    }
 
                     // Auto-save settings if they might have changed
                     if (commandName === 'antilink' || commandName === 'antidelete') {
