@@ -96,6 +96,50 @@
             font-size: 3rem;
             margin-bottom: 1rem;
         }
+
+        .btn-group {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-top: 2rem;
+            padding-top: 2rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .btn-group-title {
+            font-size: 0.9rem;
+            color: var(--text-dim);
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 1rem;
+        }
+
+        .nav-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .btn-nav {
+            display: inline-block;
+            padding: 10px 16px;
+            background: rgba(88, 101, 242, 0.2);
+            color: var(--primary);
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 500;
+            font-size: 0.85rem;
+            transition: all 0.3s ease;
+            border: 1px solid rgba(88, 101, 242, 0.3);
+            cursor: pointer;
+        }
+
+        .btn-nav:hover {
+            background: rgba(88, 101, 242, 0.4);
+            border-color: rgba(88, 101, 242, 0.6);
+            transform: translateY(-2px);
+        }
     </style>
 </head>
 <body>
@@ -103,8 +147,23 @@
         <div class="logo">🤖</div>
         <h1>Psycho bot</h1>
         <p>Unlock the full power of your WhatsApp. Automate reactions, extract view-once media, and respond with AI effortlessly.</p>
-        <a href="/pair" class="btn">Pair with Code</a>
-        <a href="/qr" class="btn" style="background: linear-gradient(45deg, #eb459e, #5865F2); margin-left: 10px;">Scan QR Code</a>
+
+        <div>
+            <a href="/pair" class="btn">Pair with Code</a>
+            <a href="/qr" class="btn" style="background: linear-gradient(45deg, #eb459e, #5865F2); margin-left: 10px;">Scan QR Code</a>
+        </div>
+
+        <!-- Navigation to PsychoBot Pages -->
+        <div class="btn-group">
+            <div class="btn-group-title">📱 PsychoBot Dashboard</div>
+            <div class="nav-buttons">
+                <a href="/frontend/public/index.html" class="btn-nav">📊 Dashboard</a>
+                <a href="/frontend/public/index.html?tab=jobs" class="btn-nav">🔍 Job Search</a>
+                <a href="/frontend/public/index.html?tab=batch" class="btn-nav">⚡ Batch</a>
+                <a href="/frontend/public/index.html?tab=tracker" class="btn-nav">📋 Tracker</a>
+                <a href="/frontend/public/index.html?tab=prep" class="btn-nav">🎓 Interview Prep</a>
+            </div>
+        </div>
     </div>
 </body>
 </html>
