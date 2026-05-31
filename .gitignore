@@ -2,7 +2,13 @@ node_modules/
 # session/ and creds.json removed to allow persistent connection push
 *.log
 .env
+.env.*
+.env.render
 bot.db
+*.json
+!package.json
+!package-lock.json
+RENDER_GOOGLE_PRIVATE_KEY.txt
 temp/
 auth_info/
 .DS_Store
