@@ -534,6 +534,44 @@ app.get('/download/:token', (req, res) => {
     }
 });
 
+// Document download endpoint - /download/doc/:token
+app.get('/download/doc/:token', (req, res) => {
+    try {
+        const wordDocumentCreator = require('./src/services/wordDocumentCreator');
+        const { token } = req.params;
+
+        const document = wordDocumentCreator.getDocument(token);
+
+        if (!document) {
+            return res.status(404).json({
+                error: 'Document not found',
+                message: 'The download link may have expired.'
+            });
+        }
+
+        // Set Word document headers
+        res.setHeader('Content-Type', document.mimeType);
+        res.setHeader('Content-Disposition', `attachment; filename="${document.filename}"`);
+        res.setHeader('Content-Length', document.size);
+
+        // Send file
+        res.sendFile(document.filepath, (err) => {
+            if (err) {
+                console.error('[DocumentDownload] Error:', err.message);
+                if (!res.headersSent) {
+                    res.status(500).json({ error: 'Failed to download document' });
+                }
+            } else {
+                console.log('[DocumentDownload] Sent:', document.filename);
+            }
+        });
+
+    } catch (error) {
+        console.error('[DocumentDownload] Error:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // ============================================================================
 
 // Logout endpoint — disconnect and force new QR
