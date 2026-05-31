@@ -745,7 +745,11 @@ async function startBot() {
 📅 *Productivite*
 • !calendar [demain|01/06] - Voir agenda
 • !planifier <date> <heure> <titre> - Creer evenement
-  Exemple: !planifier demain 10h Reunion client
+• !contacts [recherche] - Lister/rechercher contacts
+• !addcontact <nom> <email> <tel> - Ajouter contact
+• !inbox [nombre|unread] - Voir emails
+• !send <email> | <sujet> | <message> - Envoyer email
+• !search <query> - Rechercher dans Gmail
 
 🎮 *Jeux & Fun*
 • !guess - Jeu devinette
