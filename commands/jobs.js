@@ -17,13 +17,37 @@ module.exports = {
     category: 'productivity',
     usage: '!jobs [search|details|letter|apply]',
 
-    async run({ sock, msg, args }) {
+    async run({ sock, msg, args, text }) {
         const remoteJid = msg.key.remoteJid;
         const userId = remoteJid;
 
         try {
-            const action = args[0]?.toLowerCase() || 'list';
-            const jobIndex = parseInt(args[1]) - 1 || -1;
+            // Parse action from either args or message text
+            let action = 'list';
+            let jobIndex = -1;
+
+            if (args && args[0]) {
+                action = args[0].toLowerCase();
+                jobIndex = parseInt(args[1]) - 1 || -1;
+            } else if (text) {
+                // Parse from natural language text
+                const lowerText = text.toLowerCase();
+                if (lowerText.includes('search')) {
+                    action = 'search';
+                } else if (lowerText.includes('details')) {
+                    action = 'details';
+                    const match = lowerText.match(/details\s*(\d+)/);
+                    if (match) jobIndex = parseInt(match[1]) - 1;
+                } else if (lowerText.includes('letter')) {
+                    action = 'letter';
+                    const match = lowerText.match(/letter\s*(\d+)/);
+                    if (match) jobIndex = parseInt(match[1]) - 1;
+                } else if (lowerText.includes('apply')) {
+                    action = 'apply';
+                    const match = lowerText.match(/apply\s*(\d+)/);
+                    if (match) jobIndex = parseInt(match[1]) - 1;
+                }
+            }
 
             await sock.sendPresenceUpdate('composing', remoteJid);
 
