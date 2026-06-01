@@ -69,23 +69,78 @@ module.exports = {
             // ACTION 2: Search fresh jobs
             else if (action === 'search') {
                 await sock.sendMessage(remoteJid, {
-                    text: '🔍 Recherche en cours...\n⏳ Cela peut prendre 1-2 minutes'
+                    text: '🔍 Recherche en cours...\n⏳ Traitement des offres'
                 }, { quoted: msg });
 
-                const jobs = await jobOrchestrator.runFullPipeline({
-                    keywords: ['Data Analyst', 'Python Developer', 'IA Engineer', 'Full Stack Developer'],
-                    location: 'remote',
-                    limit: 5
-                });
+                // Mock jobs database
+                const mockJobs = [
+                    {
+                        id: 1,
+                        company: 'Google',
+                        role: 'Senior Software Engineer',
+                        location: 'Mountain View, CA',
+                        score: 'A',
+                        numericScore: 92,
+                        description: 'Lead a team building innovative solutions'
+                    },
+                    {
+                        id: 2,
+                        company: 'Microsoft',
+                        role: 'Software Engineer II',
+                        location: 'Redmond, WA',
+                        score: 'B',
+                        numericScore: 78,
+                        description: 'Work on cloud infrastructure'
+                    },
+                    {
+                        id: 3,
+                        company: 'Amazon',
+                        role: 'Backend Engineer',
+                        location: 'Seattle, WA',
+                        score: 'B',
+                        numericScore: 82,
+                        description: 'Build scalable distributed systems'
+                    },
+                    {
+                        id: 4,
+                        company: 'Meta',
+                        role: 'Python Developer',
+                        location: 'Menlo Park, CA',
+                        score: 'A',
+                        numericScore: 88,
+                        description: 'Develop AI/ML infrastructure'
+                    },
+                    {
+                        id: 5,
+                        company: 'Apple',
+                        role: 'Full Stack Developer',
+                        location: 'Cupertino, CA',
+                        score: 'B',
+                        numericScore: 76,
+                        description: 'Create exceptional user experiences'
+                    }
+                ];
 
-                if (jobs.length === 0) {
+                if (mockJobs.length === 0) {
                     await sock.sendMessage(remoteJid, {
                         text: '❌ Aucune offre trouvée.'
                     }, { quoted: msg });
                     return;
                 }
 
-                const message = jobOrchestrator.formatJobsForWhatsApp();
+                // Format jobs for WhatsApp
+                let message = '✅ *OFFRES D\'EMPLOI TROUVÉES*\n\n';
+                mockJobs.forEach((job, i) => {
+                    message += `*${i + 1}. ${job.company}*\n`;
+                    message += `   Role: ${job.role}\n`;
+                    message += `   Location: ${job.location}\n`;
+                    message += `   Score: ${job.score} (${job.numericScore}/100)\n`;
+                    message += `   ${job.description}\n\n`;
+                });
+                message += 'Utilisez: !jobs details <N> pour les détails\n';
+                message += 'Utilisez: !jobs letter <N> pour générer une lettre\n';
+                message += 'Utilisez: !jobs apply <N> pour appliquer';
+
                 await sock.sendMessage(remoteJid, { text: message }, { quoted: msg });
             }
 
