@@ -1832,16 +1832,27 @@ app.get('/api/dashboard/stats', (req, res) => {
     });
 });
 
+// Serve static files from root (profile.png, etc)
+app.use(express.static(__dirname));
+
 // Serve frontend
 const frontendPath = path.join(__dirname, 'frontend/build');
 if (fs.existsSync(frontendPath)) {
     app.use(express.static(frontendPath));
-    app.get('*', (req, res) => {
-        if (!req.path.startsWith('/api/')) {
-            res.sendFile(path.join(frontendPath, 'index.html'));
-        }
-    });
 }
+
+// Fallback to frontend index.html for routes
+app.get('*', (req, res) => {
+    if (req.path.startsWith('/api/')) {
+        return res.status(404).json({ error: 'Endpoint not found' });
+    }
+    const indexPath = path.join(frontendPath, 'index.html');
+    if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+    } else {
+        res.sendFile(path.join(__dirname, 'index.html'));
+    }
+});
 
 server.listen(PORT, () => {
     console.log(chalk.blue(`[Server] Port ${PORT} lié.`));
