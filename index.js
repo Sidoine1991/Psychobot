@@ -1761,6 +1761,27 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '1.0.0' });
 });
 
+// Add new job to database
+app.post('/api/jobs/add', async (req, res) => {
+    try {
+        const { company, role, score, numericScore, dimensions } = req.body;
+        if (!company || !role) {
+            return res.status(400).json({ error: 'company and role required' });
+        }
+
+        const result = await rdsClient.pool.query(
+            `INSERT INTO psychobot.job_scores (company, role, overall_score, numeric_score, dimensions)
+             VALUES ($1, $2, $3, $4, $5)
+             RETURNING *`,
+            [company, role, score || 'B', numericScore || 75, JSON.stringify(dimensions || {})]
+        );
+
+        res.json({ success: true, job: result.rows[0] });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Job search
 app.get('/api/jobs/search', async (req, res) => {
     try {

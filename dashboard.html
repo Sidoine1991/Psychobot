@@ -223,6 +223,23 @@
                 <button class="btn" onclick="searchJobs()">Search</button>
                 <div id="jobResults" style="margin-top: 1rem;"></div>
             </div>
+
+            <div class="card">
+                <h2>➕ Add New Job</h2>
+                <div style="margin-bottom: 1rem;">
+                    <input type="text" id="newJobCompany" placeholder="Company name" style="width: 100%; padding: 0.75rem; margin-bottom: 0.5rem; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.05); color: white; border-radius: 8px;">
+                    <input type="text" id="newJobRole" placeholder="Job role" style="width: 100%; padding: 0.75rem; margin-bottom: 0.5rem; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.05); color: white; border-radius: 8px;">
+                    <select id="newJobScore" style="width: 100%; padding: 0.75rem; margin-bottom: 0.5rem; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.05); color: white; border-radius: 8px;">
+                        <option value="A">A - Excellent Match</option>
+                        <option value="B" selected>B - Good Match</option>
+                        <option value="C">C - Fair Match</option>
+                        <option value="D">D - Poor Match</option>
+                    </select>
+                    <input type="number" id="newJobNumericScore" placeholder="Score (0-100)" min="0" max="100" value="75" style="width: 100%; padding: 0.75rem; margin-bottom: 0.5rem; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.05); color: white; border-radius: 8px;">
+                </div>
+                <button class="btn" onclick="addNewJob()">Add Job to Database</button>
+                <div id="addJobResult" style="margin-top: 1rem;"></div>
+            </div>
         </div>
 
         <!-- Batch Tab -->
@@ -313,6 +330,55 @@
             }
         }
 
+        async function addNewJob() {
+            const company = document.getElementById('newJobCompany').value;
+            const role = document.getElementById('newJobRole').value;
+            const score = document.getElementById('newJobScore').value;
+            const numericScore = parseInt(document.getElementById('newJobNumericScore').value);
+
+            if (!company || !role) {
+                alert('Please fill all fields');
+                return;
+            }
+
+            document.getElementById('addJobResult').innerHTML = '<div class="loading">Adding job...</div>';
+
+            try {
+                const res = await fetch(`${API_URL}/api/jobs/add`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        company, role, score, numericScore,
+                        dimensions: {
+                            cvMatch: Math.random() * 100,
+                            roleClarity: Math.random() * 100,
+                            levelStrategy: Math.random() * 100,
+                            compensationResearch: Math.random() * 100,
+                            growthTrajectory: Math.random() * 100,
+                            interviewPrep: Math.random() * 100,
+                            locationFit: Math.random() * 100,
+                            sectorAlignment: Math.random() * 100,
+                            teamDynamics: Math.random() * 100,
+                            lifeIntegration: Math.random() * 100
+                        }
+                    })
+                });
+
+                const data = await res.json();
+                if (data.success) {
+                    document.getElementById('newJobCompany').value = '';
+                    document.getElementById('newJobRole').value = '';
+                    document.getElementById('newJobNumericScore').value = '75';
+                    document.getElementById('addJobResult').innerHTML = '<p style="color: var(--primary);">✅ Job added to database!</p>';
+                    searchJobs(); // Refresh search results
+                } else {
+                    document.getElementById('addJobResult').innerHTML = '<div class="error">Error: ' + data.error + '</div>';
+                }
+            } catch (err) {
+                document.getElementById('addJobResult').innerHTML = '<div class="error">Error adding job: ' + err.message + '</div>';
+            }
+        }
+
         async function searchJobs() {
             const query = document.getElementById('jobSearch').value;
             document.getElementById('jobResults').innerHTML = '<div class="loading">Searching...</div>';
@@ -323,7 +389,7 @@
                     <div class="job-item">
                         <h3>${job.company}</h3>
                         <p><strong>Role:</strong> ${job.role}</p>
-                        <p><strong>Score:</strong> <span style="color: var(--primary);">${job.score}</span></p>
+                        <p><strong>Score:</strong> <span style="color: var(--primary);">${job.overall_score} (${job.numeric_score}/100)</span></p>
                     </div>
                 `).join('');
                 document.getElementById('jobResults').innerHTML = html || '<p style="color: var(--text-dim);">No jobs found</p>';
