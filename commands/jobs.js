@@ -10,6 +10,7 @@
 
 const jobOrchestrator = require('../src/services/jobOrchestrator');
 const interviewPrepService = require('../src/services/interviewPrepService');
+const rdsClient = require('../src/db/rdsClient');
 
 module.exports = {
     name: 'jobs',
@@ -66,82 +67,41 @@ module.exports = {
                 await sock.sendMessage(remoteJid, { text: message }, { quoted: msg });
             }
 
-            // ACTION 2: Search fresh jobs
+            // ACTION 2: Search fresh jobs from RDS
             else if (action === 'search') {
                 await sock.sendMessage(remoteJid, {
                     text: '🔍 Recherche en cours...\n⏳ Traitement des offres'
                 }, { quoted: msg });
 
-                // Mock jobs database
-                const mockJobs = [
-                    {
-                        id: 1,
-                        company: 'Google',
-                        role: 'Senior Software Engineer',
-                        location: 'Mountain View, CA',
-                        score: 'A',
-                        numericScore: 92,
-                        description: 'Lead a team building innovative solutions'
-                    },
-                    {
-                        id: 2,
-                        company: 'Microsoft',
-                        role: 'Software Engineer II',
-                        location: 'Redmond, WA',
-                        score: 'B',
-                        numericScore: 78,
-                        description: 'Work on cloud infrastructure'
-                    },
-                    {
-                        id: 3,
-                        company: 'Amazon',
-                        role: 'Backend Engineer',
-                        location: 'Seattle, WA',
-                        score: 'B',
-                        numericScore: 82,
-                        description: 'Build scalable distributed systems'
-                    },
-                    {
-                        id: 4,
-                        company: 'Meta',
-                        role: 'Python Developer',
-                        location: 'Menlo Park, CA',
-                        score: 'A',
-                        numericScore: 88,
-                        description: 'Develop AI/ML infrastructure'
-                    },
-                    {
-                        id: 5,
-                        company: 'Apple',
-                        role: 'Full Stack Developer',
-                        location: 'Cupertino, CA',
-                        score: 'B',
-                        numericScore: 76,
-                        description: 'Create exceptional user experiences'
+                try {
+                    // Get jobs from RDS database
+                    const jobs = await rdsClient.getJobs(10);
+
+                    if (jobs.length === 0) {
+                        await sock.sendMessage(remoteJid, {
+                            text: '❌ Aucune offre trouvée dans la base de données.'
+                        }, { quoted: msg });
+                        return;
                     }
-                ];
 
-                if (mockJobs.length === 0) {
+                    // Format jobs for WhatsApp
+                    let message = '✅ *OFFRES D\'EMPLOI TROUVÉES*\n\n';
+                    jobs.forEach((job, i) => {
+                        message += `*${i + 1}. ${job.company}*\n`;
+                        message += `   Role: ${job.role}\n`;
+                        message += `   Score: ${job.overall_score} (${job.numeric_score}/100)\n\n`;
+                    });
+                    message += 'Utilisez: !jobs details <N> pour les détails\n';
+                    message += 'Utilisez: !jobs letter <N> pour générer une lettre\n';
+                    message += 'Utilisez: !jobs apply <N> pour appliquer';
+
+                    await sock.sendMessage(remoteJid, { text: message }, { quoted: msg });
+                } catch (err) {
+                    console.error('[Jobs] Search error:', err);
                     await sock.sendMessage(remoteJid, {
-                        text: '❌ Aucune offre trouvée.'
+                        text: '❌ Erreur lors de la recherche: ' + err.message
                     }, { quoted: msg });
-                    return;
                 }
-
-                // Format jobs for WhatsApp
-                let message = '✅ *OFFRES D\'EMPLOI TROUVÉES*\n\n';
-                mockJobs.forEach((job, i) => {
-                    message += `*${i + 1}. ${job.company}*\n`;
-                    message += `   Role: ${job.role}\n`;
-                    message += `   Location: ${job.location}\n`;
-                    message += `   Score: ${job.score} (${job.numericScore}/100)\n`;
-                    message += `   ${job.description}\n\n`;
-                });
-                message += 'Utilisez: !jobs details <N> pour les détails\n';
-                message += 'Utilisez: !jobs letter <N> pour générer une lettre\n';
-                message += 'Utilisez: !jobs apply <N> pour appliquer';
-
-                await sock.sendMessage(remoteJid, { text: message }, { quoted: msg });
             }
 
             // ACTION 3: Show job details

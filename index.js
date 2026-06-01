@@ -27,6 +27,7 @@ const { getAutoReplyTemplate, formatReplyForWhatsApp } = require('./src/handlers
 const intentAnalyzer = require('./src/services/intentAnalyzer');
 const contextManager = require('./src/services/contextManager');
 const commandExecutor = require('./src/services/commandExecutor');
+const rdsClient = require('./src/db/rdsClient');
 
 const NVIDIA_NIM_API_KEY = process.env.NVIDIA_NIM_API_KEY || "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";
 const NVIDIA_NIM_BASE = "https://integrate.api.nvidia.com/v1";
@@ -1743,14 +1744,17 @@ cron.schedule('*/5 * * * *', async () => {
 loadCommands();
 
 // ============ CAREER-OPS API ROUTES ============
-
-// Mock data
-const mockJobs = [
-    { id: 1, company: 'Google', role: 'Senior Software Engineer', location: 'Mountain View, CA', score: 'A', numericScore: 92 },
-    { id: 2, company: 'Microsoft', role: 'Software Engineer II', location: 'Redmond, WA', score: 'B', numericScore: 78 }
-];
-const mockApplications = [];
-const mockStories = [];
+// Initialize RDS connection on startup
+(async () => {
+    try {
+        if (process.env.AWS_RDS_HOST) {
+            await rdsClient.connect();
+            console.log('[API] RDS Client connected');
+        }
+    } catch (err) {
+        console.error('[API] RDS connection failed:', err.message);
+    }
+})();
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -1758,78 +1762,89 @@ app.get('/api/health', (req, res) => {
 });
 
 // Job search
-app.get('/api/jobs/search', (req, res) => {
-    const { q = '' } = req.query;
-    let results = mockJobs;
-    if (q) {
-        results = mockJobs.filter(job =>
-            job.company.toLowerCase().includes(q.toLowerCase()) ||
-            job.role.toLowerCase().includes(q.toLowerCase())
-        );
+app.get('/api/jobs/search', async (req, res) => {
+    try {
+        const { q = '' } = req.query;
+        const results = q ? await rdsClient.searchJobs(q) : await rdsClient.getJobs(10);
+        res.json({ success: true, count: results.length, jobs: results });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
-    res.json({ success: true, count: results.length, jobs: results });
 });
 
 // Track application
-app.post('/api/jobs/track', (req, res) => {
-    const { company, role, status = 'Applied' } = req.body;
-    if (!company || !role) {
-        return res.status(400).json({ error: 'company and role required' });
+app.post('/api/jobs/track', async (req, res) => {
+    try {
+        const { company, role, status = 'Applied' } = req.body;
+        if (!company || !role) {
+            return res.status(400).json({ error: 'company and role required' });
+        }
+        const application = await rdsClient.createApplication(company, role, status);
+        res.json({ success: true, application });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
-    const application = {
-        id: mockApplications.length + 1,
-        company, role, status,
-        appliedDate: new Date().toISOString(),
-        nextFollowup: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
-    };
-    mockApplications.push(application);
-    res.json({ success: true, application });
 });
 
 // Get applications
-app.get('/api/jobs/track', (req, res) => {
-    res.json({ success: true, count: mockApplications.length, applications: mockApplications });
+app.get('/api/jobs/track', async (req, res) => {
+    try {
+        const applications = await rdsClient.getApplications();
+        res.json({ success: true, count: applications.length, applications });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // Save interview story
-app.post('/api/prep/stories', (req, res) => {
-    const { title, situation, task, action, result, reflection, roles = [] } = req.body;
-    if (!title || !situation || !task || !action || !result) {
-        return res.status(400).json({ error: 'Missing required fields' });
+app.post('/api/prep/stories', async (req, res) => {
+    try {
+        const { title, situation, task, action, result, reflection, roles = [] } = req.body;
+        if (!title || !situation) {
+            return res.status(400).json({ error: 'title and situation required' });
+        }
+        const story = await rdsClient.createStory(title, situation, task, action, result, reflection, roles);
+        res.json({ success: true, story });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
-    const story = { id: mockStories.length + 1, title, situation, task, action, result, reflection, roles, confidence: 'Medium', createdAt: new Date().toISOString() };
-    mockStories.push(story);
-    res.json({ success: true, story });
 });
 
 // Get stories
-app.get('/api/prep/stories', (req, res) => {
-    res.json({ success: true, count: mockStories.length, stories: mockStories });
+app.get('/api/prep/stories', async (req, res) => {
+    try {
+        const stories = await rdsClient.getStories();
+        res.json({ success: true, count: stories.length, stories });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // Batch process jobs
-app.post('/api/batch/process', (req, res) => {
-    const { jobs = [] } = req.body;
-    if (!jobs.length) {
-        return res.status(400).json({ error: 'No jobs provided' });
+app.post('/api/batch/process', async (req, res) => {
+    try {
+        const { jobs = [] } = req.body;
+        if (!jobs.length) {
+            return res.status(400).json({ error: 'No jobs provided' });
+        }
+        // TODO: Implement Career-Ops scoring
+        const scored = jobs.map((job, i) => ({
+            ...job, id: i + 1, score: ['A', 'B', 'C'][i % 3], numericScore: 70 + i * 5
+        }));
+        res.json({ success: true, count: scored.length, jobs: scored });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
-    const scored = jobs.map((job, i) => ({
-        ...job, id: i + 1, score: ['A', 'B', 'C'][i % 3], numericScore: 70 + i * 5
-    }));
-    res.json({ success: true, count: scored.length, jobs: scored });
 });
 
 // Dashboard stats
-app.get('/api/dashboard/stats', (req, res) => {
-    res.json({
-        success: true,
-        stats: {
-            totalApplications: mockApplications.length,
-            totalStories: mockStories.length,
-            averageScore: 82,
-            upcomingFollowups: 2
-        }
-    });
+app.get('/api/dashboard/stats', async (req, res) => {
+    try {
+        const stats = await rdsClient.getDashboardStats();
+        res.json({ success: true, stats });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // Serve static files from root (profile.png, etc)
