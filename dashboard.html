@@ -197,6 +197,7 @@
         <h1>🤖 PsychoBot Career-Ops</h1>
         <div class="tabs">
             <button class="tab-btn active" onclick="switchTab('dashboard')">📊 Dashboard</button>
+            <button class="tab-btn" onclick="switchTab('prospect')">🎯 Prospect</button>
             <button class="tab-btn" onclick="switchTab('jobs')">🔍 Job Search</button>
             <button class="tab-btn" onclick="switchTab('batch')">⚡ Batch</button>
             <button class="tab-btn" onclick="switchTab('tracker')">📋 Tracker</button>
@@ -212,6 +213,34 @@
                 <div class="stats" id="dashStats">
                     <div class="loading">Loading stats...</div>
                 </div>
+            </div>
+        </div>
+
+        <!-- Prospect Tab -->
+        <div id="prospect" class="tab-content">
+            <div class="card">
+                <h2>🎯 Job Prospect & Scraping</h2>
+                <p style="color: var(--text-dim); margin-bottom: 1rem;">Search Indeed, LinkedIn, Glassdoor for new opportunities</p>
+                <div style="margin-bottom: 1rem;">
+                    <input type="text" id="prospectKeywords" placeholder="e.g., Senior Engineer" value="software engineer" style="width: 48%; padding: 0.75rem; margin-right: 1%; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.05); color: white; border-radius: 8px;">
+                    <input type="text" id="prospectLocation" placeholder="e.g., Remote" value="Remote" style="width: 48%; padding: 0.75rem; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.05); color: white; border-radius: 8px;">
+                </div>
+                <button class="btn" onclick="prospectJobs()">🔍 Start Prospect</button>
+                <div id="prospectResults" style="margin-top: 1rem;"></div>
+            </div>
+
+            <div class="card">
+                <h2>📋 Jobs Pending Review</h2>
+                <p style="color: var(--text-dim); margin-bottom: 1rem;">Score these jobs before applying</p>
+                <button class="btn" onclick="loadPendingJobs()">Load Pending</button>
+                <div id="pendingJobsList" style="margin-top: 1rem;"></div>
+            </div>
+
+            <div class="card">
+                <h2>⭐ High Score Jobs (Ready to Apply)</h2>
+                <p style="color: var(--text-dim); margin-bottom: 1rem;">Jobs scored >= 75 - Ready for application</p>
+                <button class="btn" onclick="loadHighScoreJobs()">Load High Scores</button>
+                <div id="highScoreList" style="margin-top: 1rem;"></div>
             </div>
         </div>
 
@@ -494,6 +523,147 @@
                 document.getElementById('storyList').innerHTML = html || '<p style="color: var(--text-dim);">No stories yet</p>';
             } catch (err) {
                 document.getElementById('storyList').innerHTML = '<div class="error">Error loading stories</div>';
+            }
+        }
+
+        // ===== PROSPECT FUNCTIONS =====
+
+        async function prospectJobs() {
+            const keywords = document.getElementById('prospectKeywords').value || 'software engineer';
+            const location = document.getElementById('prospectLocation').value || 'Remote';
+
+            document.getElementById('prospectResults').innerHTML = '<div class="loading">🔍 Scrapping Indeed, LinkedIn, Glassdoor...</div>';
+
+            try {
+                const res = await fetch(`${API_URL}/api/prospect/search`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ keywords, location, limit: 20 })
+                });
+
+                const data = await res.json();
+                let html = `<div class="card" style="background: rgba(76, 175, 80, 0.1); border-color: rgba(76, 175, 80, 0.3);">
+                    <h3 style="color: #4CAF50;">✅ Prospection Complete</h3>
+                    <p><strong>Stored:</strong> ${data.stored}/${data.total} jobs</p>
+                    <p><strong>Status:</strong> PENDING_REVIEW</p>
+                    <p style="color: var(--text-dim); margin-top: 1rem;">Next: Review and score jobs below</p>
+                </div>`;
+
+                if (data.errors && data.errors.length > 0) {
+                    html += `<div class="error"><strong>Errors (${data.errors.length}):</strong><br>${data.errors.map(e => e.error).join('<br>')}</div>`;
+                }
+
+                document.getElementById('prospectResults').innerHTML = html;
+
+                // Auto-load pending jobs
+                setTimeout(() => loadPendingJobs(), 500);
+            } catch (err) {
+                document.getElementById('prospectResults').innerHTML = `<div class="error">Error: ${err.message}</div>`;
+            }
+        }
+
+        async function loadPendingJobs() {
+            document.getElementById('pendingJobsList').innerHTML = '<div class="loading">Loading pending jobs...</div>';
+
+            try {
+                const res = await fetch(`${API_URL}/api/prospect/pending?limit=15`);
+                const data = await res.json();
+
+                if (data.jobs.length === 0) {
+                    document.getElementById('pendingJobsList').innerHTML = '<p style="color: var(--text-dim);">No pending jobs. Run prospect search first.</p>';
+                    return;
+                }
+
+                let html = `<p style="color: var(--text-dim); margin-bottom: 1rem;">Found ${data.count} jobs awaiting review</p>`;
+
+                data.jobs.forEach((job, i) => {
+                    html += `
+                        <div class="job-item" style="margin-bottom: 1rem; border-left: 3px solid var(--primary); padding-left: 1rem;">
+                            <h4>${i + 1}. ${job.company} - ${job.role}</h4>
+                            <p style="color: var(--text-dim); margin: 0.25rem 0;">Source: ${job.source}</p>
+                            <p style="color: var(--text-dim); margin: 0.25rem 0;">Posted: ${new Date(job.posted_date).toLocaleDateString()}</p>
+                            <div style="margin-top: 0.5rem; display: flex; gap: 0.5rem;">
+                                <select id="score_${job.id}" style="padding: 0.5rem; border-radius: 4px; background: rgba(255,255,255,0.05); color: white; border: 1px solid rgba(255,255,255,0.2);">
+                                    <option value="A">A - Excellent</option>
+                                    <option value="B" selected>B - Good</option>
+                                    <option value="C">C - Fair</option>
+                                    <option value="D">D - Poor</option>
+                                </select>
+                                <input type="number" id="numeric_${job.id}" min="0" max="100" value="75" placeholder="Score" style="width: 80px; padding: 0.5rem; border-radius: 4px; background: rgba(255,255,255,0.05); color: white; border: 1px solid rgba(255,255,255,0.2);">
+                                <button class="btn" onclick="scoreJob(${job.id})" style="padding: 0.5rem 1rem; font-size: 0.9rem;">Score</button>
+                            </div>
+                        </div>
+                    `;
+                });
+
+                document.getElementById('pendingJobsList').innerHTML = html;
+            } catch (err) {
+                document.getElementById('pendingJobsList').innerHTML = `<div class="error">Error: ${err.message}</div>`;
+            }
+        }
+
+        async function scoreJob(jobId) {
+            const grade = document.getElementById(`score_${jobId}`).value;
+            const numeric = parseInt(document.getElementById(`numeric_${jobId}`).value);
+
+            try {
+                const res = await fetch(`${API_URL}/api/prospect/score`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        jobId,
+                        overallScore: grade,
+                        numericScore: numeric,
+                        dimensions: {
+                            cvMatch: Math.random() * 100,
+                            roleClarity: Math.random() * 100,
+                            levelStrategy: Math.random() * 100,
+                            compensationResearch: Math.random() * 100,
+                            growthTrajectory: Math.random() * 100
+                        }
+                    })
+                });
+
+                const data = await res.json();
+                if (data.success) {
+                    alert(`✅ Scored: ${data.job.company} - ${grade} (${numeric}/100)`);
+                    loadPendingJobs(); // Refresh list
+                    setTimeout(() => loadHighScoreJobs(), 500);
+                }
+            } catch (err) {
+                alert(`Error: ${err.message}`);
+            }
+        }
+
+        async function loadHighScoreJobs() {
+            document.getElementById('highScoreList').innerHTML = '<div class="loading">Loading high scores...</div>';
+
+            try {
+                const res = await fetch(`${API_URL}/api/prospect/high-scores?threshold=75`);
+                const data = await res.json();
+
+                if (data.jobs.length === 0) {
+                    document.getElementById('highScoreList').innerHTML = '<p style="color: var(--text-dim);">No jobs with score >= 75 yet. Score pending jobs first.</p>';
+                    return;
+                }
+
+                let html = `<p style="color: #4CAF50; margin-bottom: 1rem;">🎯 Ready for Application: ${data.count} jobs</p>`;
+
+                data.jobs.forEach((job, i) => {
+                    html += `
+                        <div class="job-item" style="margin-bottom: 1rem; border: 2px solid #4CAF50; background: rgba(76, 175, 80, 0.1); padding: 1rem; border-radius: 8px;">
+                            <h4>${i + 1}. ${job.company}</h4>
+                            <p><strong>${job.role}</strong></p>
+                            <p style="color: #4CAF50; margin: 0.5rem 0;"><strong>Score: ${job.overall_score} (${job.numeric_score}/100)</strong></p>
+                            <p style="color: var(--text-dim); margin: 0.25rem 0;">Source: ${job.source}</p>
+                            <button class="btn" onclick="alert('Apply: ${job.company} - ${job.role}')" style="margin-top: 0.5rem;">Apply Now</button>
+                        </div>
+                    `;
+                });
+
+                document.getElementById('highScoreList').innerHTML = html;
+            } catch (err) {
+                document.getElementById('highScoreList').innerHTML = `<div class="error">Error: ${err.message}</div>`;
             }
         }
 

@@ -1868,6 +1868,84 @@ app.get('/api/dashboard/stats', async (req, res) => {
     }
 });
 
+// ===== PROSPECT ENDPOINTS =====
+
+// Prospect jobs from web (search + scrape)
+app.post('/api/prospect/search', async (req, res) => {
+    try {
+        const jobProspector = require('./src/services/jobProspector');
+        const { keywords = 'software engineer', location = 'Remote', limit = 20 } = req.body;
+
+        const result = await jobProspector.prospectJobs(keywords, location, limit);
+        res.json({
+            success: true,
+            stored: result.stored,
+            total: result.total,
+            jobs: result.jobs,
+            errors: result.errors
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get pending jobs for review
+app.get('/api/prospect/pending', async (req, res) => {
+    try {
+        const jobProspector = require('./src/services/jobProspector');
+        const { limit = 20 } = req.query;
+
+        const pending = await jobProspector.getPendingJobs(parseInt(limit));
+        res.json({
+            success: true,
+            count: pending.length,
+            jobs: pending
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Score a job after review
+app.post('/api/prospect/score', async (req, res) => {
+    try {
+        const jobProspector = require('./src/services/jobProspector');
+        const { jobId, overallScore, numericScore, dimensions = {} } = req.body;
+
+        if (!jobId) {
+            return res.status(400).json({ error: 'jobId required' });
+        }
+
+        const scored = await jobProspector.scoreJob(jobId, overallScore, numericScore, dimensions);
+
+        if (!scored) {
+            return res.status(404).json({ error: 'Job not found' });
+        }
+
+        res.json({ success: true, job: scored });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get high-score jobs ready for application
+app.get('/api/prospect/high-scores', async (req, res) => {
+    try {
+        const jobProspector = require('./src/services/jobProspector');
+        const { threshold = 75 } = req.query;
+
+        const highScore = await jobProspector.getHighScoreJobs(parseInt(threshold));
+        res.json({
+            success: true,
+            count: highScore.length,
+            threshold: parseInt(threshold),
+            jobs: highScore
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Serve static files from root (profile.png, etc)
 app.use(express.static(__dirname));
 
