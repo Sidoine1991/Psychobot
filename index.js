@@ -1870,6 +1870,52 @@ app.get('/api/dashboard/stats', async (req, res) => {
 
 // ===== PROSPECT ENDPOINTS =====
 
+// Migrate job_scores table schema
+app.post('/api/admin/migrate-job-schema', async (req, res) => {
+    try {
+        console.log('[MIGRATION] Starting job_scores schema migration...');
+
+        // Columns to add if missing
+        const columns = [
+            { name: 'source', type: 'VARCHAR(50)' },
+            { name: 'job_url', type: 'TEXT' },
+            { name: 'posted_date', type: 'TIMESTAMP' },
+            { name: 'reviewed_date', type: 'TIMESTAMP' },
+            { name: 'status', type: "VARCHAR(50) DEFAULT 'PENDING_REVIEW'" }
+        ];
+
+        const added = [];
+        const skipped = [];
+
+        for (const col of columns) {
+            try {
+                // Try to add the column
+                await rdsClient.pool.query(
+                    `ALTER TABLE psychobot.job_scores ADD COLUMN IF NOT EXISTS ${col.name} ${col.type}`
+                );
+                added.push(col.name);
+                console.log(`[MIGRATION] Added column: ${col.name}`);
+            } catch (err) {
+                if (err.message.includes('already exists')) {
+                    skipped.push(col.name);
+                } else {
+                    console.error(`[MIGRATION] Error adding ${col.name}:`, err.message);
+                }
+            }
+        }
+
+        res.json({
+            success: true,
+            added: added,
+            skipped: skipped,
+            message: `Added ${added.length} columns, ${skipped.length} already existed`
+        });
+
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Prospect jobs from web (search + scrape)
 app.post('/api/prospect/search', async (req, res) => {
     try {
