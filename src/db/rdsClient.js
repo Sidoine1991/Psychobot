@@ -18,16 +18,24 @@ class RDSClient {
         if (this.connected) return;
 
         try {
+            // SSL configuration for RDS
+            const sslConfig = process.env.AWS_RDS_SSLMODE === 'require' || process.env.NODE_ENV === 'production'
+                ? {
+                    rejectUnauthorized: false,
+                    sslmode: 'require'
+                }
+                : false;
+
             this.pool = new Pool({
                 host: process.env.AWS_RDS_HOST,
                 port: parseInt(process.env.AWS_RDS_PORT || 5432),
                 database: process.env.AWS_RDS_DATABASE || 'psychobot',
                 user: process.env.AWS_RDS_USER,
                 password: process.env.AWS_RDS_PASSWORD,
-                ssl: process.env.AWS_RDS_SSLMODE === 'require' ? { rejectUnauthorized: false } : false,
+                ssl: sslConfig,
                 max: 10,
                 idleTimeoutMillis: 30000,
-                connectionTimeoutMillis: 2000,
+                connectionTimeoutMillis: 5000,
             });
 
             // Test connection
