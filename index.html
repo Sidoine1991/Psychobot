@@ -140,6 +140,71 @@
             border-color: rgba(88, 101, 242, 0.6);
             transform: translateY(-2px);
         }
+
+        .dev-card {
+            margin-top: 2rem;
+            padding-top: 2rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            animation: slideUp 0.8s ease-out 0.3s both;
+        }
+
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .dev-photo {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            border: 2px solid rgba(88, 101, 242, 0.5);
+            object-fit: cover;
+            box-shadow: 0 4px 12px rgba(88, 101, 242, 0.3);
+        }
+
+        .dev-info {
+            text-align: left;
+            flex: 1;
+        }
+
+        .dev-title {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .dev-name {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text);
+            margin-bottom: 0.5rem;
+        }
+
+        .btn-contact {
+            display: inline-block;
+            padding: 8px 16px;
+            background: rgba(235, 69, 158, 0.2);
+            color: var(--secondary);
+            text-decoration: none;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            border: 1px solid rgba(235, 69, 158, 0.4);
+            transition: all 0.3s ease;
+        }
+
+        .btn-contact:hover {
+            background: rgba(235, 69, 158, 0.4);
+            border-color: rgba(235, 69, 158, 0.7);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(235, 69, 158, 0.3);
+        }
     </style>
 </head>
 <body>
@@ -147,6 +212,16 @@
         <div class="logo">🤖</div>
         <h1>Psycho bot</h1>
         <p>Unlock the full power of your WhatsApp. Automate reactions, extract view-once media, and respond with AI effortlessly.</p>
+
+        <!-- Developer Contact Card -->
+        <div class="dev-card">
+            <img src="/profile.png" alt="Developer" class="dev-photo">
+            <div class="dev-info">
+                <div class="dev-title">👨‍💻 Développeur</div>
+                <div class="dev-name">Sidoine</div>
+                <a href="https://wa.me/237696814391" class="btn-contact" target="_blank">💬 WhatsApp</a>
+            </div>
+        </div>
 
         <div>
             <a href="/pair" class="btn">Pair with Code</a>
