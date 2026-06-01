@@ -1741,6 +1741,108 @@ cron.schedule('*/5 * * * *', async () => {
 });
 
 loadCommands();
+
+// ============ CAREER-OPS API ROUTES ============
+
+// Mock data
+const mockJobs = [
+    { id: 1, company: 'Google', role: 'Senior Software Engineer', location: 'Mountain View, CA', score: 'A', numericScore: 92 },
+    { id: 2, company: 'Microsoft', role: 'Software Engineer II', location: 'Redmond, WA', score: 'B', numericScore: 78 }
+];
+const mockApplications = [];
+const mockStories = [];
+
+// Health check
+app.get('/api/health', (req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '1.0.0' });
+});
+
+// Job search
+app.get('/api/jobs/search', (req, res) => {
+    const { q = '' } = req.query;
+    let results = mockJobs;
+    if (q) {
+        results = mockJobs.filter(job =>
+            job.company.toLowerCase().includes(q.toLowerCase()) ||
+            job.role.toLowerCase().includes(q.toLowerCase())
+        );
+    }
+    res.json({ success: true, count: results.length, jobs: results });
+});
+
+// Track application
+app.post('/api/jobs/track', (req, res) => {
+    const { company, role, status = 'Applied' } = req.body;
+    if (!company || !role) {
+        return res.status(400).json({ error: 'company and role required' });
+    }
+    const application = {
+        id: mockApplications.length + 1,
+        company, role, status,
+        appliedDate: new Date().toISOString(),
+        nextFollowup: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+    };
+    mockApplications.push(application);
+    res.json({ success: true, application });
+});
+
+// Get applications
+app.get('/api/jobs/track', (req, res) => {
+    res.json({ success: true, count: mockApplications.length, applications: mockApplications });
+});
+
+// Save interview story
+app.post('/api/prep/stories', (req, res) => {
+    const { title, situation, task, action, result, reflection, roles = [] } = req.body;
+    if (!title || !situation || !task || !action || !result) {
+        return res.status(400).json({ error: 'Missing required fields' });
+    }
+    const story = { id: mockStories.length + 1, title, situation, task, action, result, reflection, roles, confidence: 'Medium', createdAt: new Date().toISOString() };
+    mockStories.push(story);
+    res.json({ success: true, story });
+});
+
+// Get stories
+app.get('/api/prep/stories', (req, res) => {
+    res.json({ success: true, count: mockStories.length, stories: mockStories });
+});
+
+// Batch process jobs
+app.post('/api/batch/process', (req, res) => {
+    const { jobs = [] } = req.body;
+    if (!jobs.length) {
+        return res.status(400).json({ error: 'No jobs provided' });
+    }
+    const scored = jobs.map((job, i) => ({
+        ...job, id: i + 1, score: ['A', 'B', 'C'][i % 3], numericScore: 70 + i * 5
+    }));
+    res.json({ success: true, count: scored.length, jobs: scored });
+});
+
+// Dashboard stats
+app.get('/api/dashboard/stats', (req, res) => {
+    res.json({
+        success: true,
+        stats: {
+            totalApplications: mockApplications.length,
+            totalStories: mockStories.length,
+            averageScore: 82,
+            upcomingFollowups: 2
+        }
+    });
+});
+
+// Serve frontend
+const frontendPath = path.join(__dirname, 'frontend/build');
+if (fs.existsSync(frontendPath)) {
+    app.use(express.static(frontendPath));
+    app.get('*', (req, res) => {
+        if (!req.path.startsWith('/api/')) {
+            res.sendFile(path.join(frontendPath, 'index.html'));
+        }
+    });
+}
+
 server.listen(PORT, () => {
     console.log(chalk.blue(`[Server] Port ${PORT} lié.`));
     startBot().catch(err => {
