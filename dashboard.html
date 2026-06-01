@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PsychoBot Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #5865F2;
+            --secondary: #eb459e;
+            --bg: #0a0a0c;
+            --card-bg: rgba(255, 255, 255, 0.05);
+            --text: #ffffff;
+            --text-dim: #a0a0a0;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            background-image:
+                radial-gradient(circle at 20% 20%, rgba(88, 101, 242, 0.15) 0%, transparent 40%),
+                radial-gradient(circle at 80% 80%, rgba(235, 69, 158, 0.15) 0%, transparent 40%);
+        }
+
+        .header {
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 1.5rem;
+            text-align: center;
+        }
+
+        .header h1 {
+            background: linear-gradient(45deg, var(--primary), var(--secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 1rem;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+            padding: 1rem;
+        }
+
+        .tab-btn {
+            padding: 10px 20px;
+            background: rgba(88, 101, 242, 0.2);
+            color: var(--primary);
+            border: 1px solid rgba(88, 101, 242, 0.3);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        .tab-btn:hover {
+            background: rgba(88, 101, 242, 0.4);
+            transform: translateY(-2px);
+        }
+
+        .tab-btn.active {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+        }
+
+        .tab-content {
+            display: none;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .card {
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 1rem;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-dim);
+        }
+
+        .error {
+            background: rgba(255, 0, 0, 0.1);
+            border: 1px solid rgba(255, 0, 0, 0.3);
+            color: #ff6b6b;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            background: linear-gradient(45deg, var(--primary), var(--secondary));
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(88, 101, 242, 0.3);
+        }
+
+        .home-link {
+            text-align: center;
+            padding: 1rem;
+        }
+
+        .home-link a {
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .home-link a:hover {
+            color: var(--secondary);
+        }
+
+        .job-item {
+            background: rgba(88, 101, 242, 0.1);
+            border: 1px solid rgba(88, 101, 242, 0.2);
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+
+        .job-item h3 {
+            color: var(--primary);
+            margin-bottom: 0.5rem;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: rgba(88, 101, 242, 0.1);
+            border: 1px solid rgba(88, 101, 242, 0.2);
+            padding: 1.5rem;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-number {
+            font-size: 2rem;
+            font-weight: 600;
+            color: var(--primary);
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-label {
+            color: var(--text-dim);
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🤖 PsychoBot Career-Ops</h1>
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('dashboard')">📊 Dashboard</button>
+            <button class="tab-btn" onclick="switchTab('jobs')">🔍 Job Search</button>
+            <button class="tab-btn" onclick="switchTab('batch')">⚡ Batch</button>
+            <button class="tab-btn" onclick="switchTab('tracker')">📋 Tracker</button>
+            <button class="tab-btn" onclick="switchTab('prep')">🎓 Interview Prep</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Dashboard Tab -->
+        <div id="dashboard" class="tab-content active">
+            <div class="card">
+                <h2>📊 Dashboard Overview</h2>
+                <div class="stats" id="dashStats">
+                    <div class="loading">Loading stats...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Job Search Tab -->
+        <div id="jobs" class="tab-content">
+            <div class="card">
+                <h2>🔍 Job Search</h2>
+                <input type="text" id="jobSearch" placeholder="Search jobs..." style="width: 100%; padding: 0.75rem; margin-bottom: 1rem; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.05); color: white; border-radius: 8px;">
+                <button class="btn" onclick="searchJobs()">Search</button>
+                <div id="jobResults" style="margin-top: 1rem;"></div>
+            </div>
+        </div>
+
+        <!-- Batch Tab -->
+        <div id="batch" class="tab-content">
+            <div class="card">
+                <h2>⚡ Batch Job Processing</h2>
+                <p style="color: var(--text-dim); margin-bottom: 1rem;">Upload multiple jobs for Career-Ops scoring</p>
+                <textarea id="batchJobs" placeholder='Paste JSON array of jobs...' style="width: 100%; height: 200px; padding: 1rem; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.05); color: white; border-radius: 8px; font-family: monospace; margin-bottom: 1rem;"></textarea>
+                <button class="btn" onclick="processBatch()">Process Batch</button>
+                <div id="batchResults" style="margin-top: 1rem;"></div>
+            </div>
+        </div>
+
+        <!-- Tracker Tab -->
+        <div id="tracker" class="tab-content">
+            <div class="card">
+                <h2>📋 Application Tracker</h2>
+                <div style="margin-bottom: 1rem;">
+                    <input type="text" id="trackerCompany" placeholder="Company name" style="width: 48%; padding: 0.75rem; margin-right: 1%; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.05); color: white; border-radius: 8px;">
+                    <input type="text" id="trackerRole" placeholder="Role" style="width: 48%; padding: 0.75rem; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.05); color: white; border-radius: 8px;">
+                </div>
+                <button class="btn" onclick="trackApplication()">Track Application</button>
+                <div id="trackerList" style="margin-top: 1rem;"></div>
+            </div>
+        </div>
+
+        <!-- Interview Prep Tab -->
+        <div id="prep" class="tab-content">
+            <div class="card">
+                <h2>🎓 Interview Preparation</h2>
+                <div style="margin-bottom: 1rem;">
+                    <input type="text" id="storyTitle" placeholder="Story title (e.g., 'Led team project')" style="width: 100%; padding: 0.75rem; margin-bottom: 0.5rem; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.05); color: white; border-radius: 8px;">
+                    <textarea id="storyContent" placeholder="Write your STAR story (Situation-Task-Action-Result)" style="width: 100%; height: 150px; padding: 0.75rem; margin-bottom: 0.5rem; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.05); color: white; border-radius: 8px;"></textarea>
+                </div>
+                <button class="btn" onclick="saveStory()">Save Story</button>
+                <div id="storyList" style="margin-top: 1rem;"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="home-link">
+        <a href="/">← Back to Home</a>
+    </div>
+
+    <script>
+        const API_URL = window.location.origin;
+
+        function switchTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+
+            // Show selected tab
+            document.getElementById(tabName).classList.add('active');
+            event.target.classList.add('active');
+
+            // Load data
+            if (tabName === 'dashboard') loadDashboard();
+            else if (tabName === 'tracker') loadApplications();
+            else if (tabName === 'prep') loadStories();
+        }
+
+        async function loadDashboard() {
+            try {
+                const res = await fetch(`${API_URL}/api/dashboard/stats`);
+                const data = await res.json();
+                const html = `
+                    <div class="stat-card">
+                        <div class="stat-number">${data.stats.totalApplications}</div>
+                        <div class="stat-label">Applications</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number">${data.stats.totalStories}</div>
+                        <div class="stat-label">Interview Stories</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number">${data.stats.averageScore}</div>
+                        <div class="stat-label">Average Score</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number">${data.stats.upcomingFollowups}</div>
+                        <div class="stat-label">Follow-ups Due</div>
+                    </div>
+                `;
+                document.getElementById('dashStats').innerHTML = html;
+            } catch (err) {
+                document.getElementById('dashStats').innerHTML = `<div class="error">Error loading stats</div>`;
+            }
+        }
+
+        async function searchJobs() {
+            const query = document.getElementById('jobSearch').value;
+            document.getElementById('jobResults').innerHTML = '<div class="loading">Searching...</div>';
+            try {
+                const res = await fetch(`${API_URL}/api/jobs/search?q=${encodeURIComponent(query)}`);
+                const data = await res.json();
+                const html = data.jobs.map(job => `
+                    <div class="job-item">
+                        <h3>${job.company}</h3>
+                        <p><strong>Role:</strong> ${job.role}</p>
+                        <p><strong>Score:</strong> <span style="color: var(--primary);">${job.score}</span></p>
+                    </div>
+                `).join('');
+                document.getElementById('jobResults').innerHTML = html || '<p style="color: var(--text-dim);">No jobs found</p>';
+            } catch (err) {
+                document.getElementById('jobResults').innerHTML = '<div class="error">Error searching jobs</div>';
+            }
+        }
+
+        async function processBatch() {
+            const jobsText = document.getElementById('batchJobs').value;
+            try {
+                const jobs = JSON.parse(jobsText);
+                document.getElementById('batchResults').innerHTML = '<div class="loading">Processing...</div>';
+                const res = await fetch(`${API_URL}/api/batch/process`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ jobs })
+                });
+                const data = await res.json();
+                const html = data.jobs.map(job => `
+                    <div class="job-item">
+                        <h3>${job.company} - ${job.role}</h3>
+                        <p><strong>Score:</strong> ${job.score}</p>
+                    </div>
+                `).join('');
+                document.getElementById('batchResults').innerHTML = html;
+            } catch (err) {
+                document.getElementById('batchResults').innerHTML = '<div class="error">Invalid JSON or processing error</div>';
+            }
+        }
+
+        async function trackApplication() {
+            const company = document.getElementById('trackerCompany').value;
+            const role = document.getElementById('trackerRole').value;
+            if (!company || !role) {
+                alert('Please fill all fields');
+                return;
+            }
+            try {
+                const res = await fetch(`${API_URL}/api/jobs/track`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ company, role })
+                });
+                document.getElementById('trackerCompany').value = '';
+                document.getElementById('trackerRole').value = '';
+                loadApplications();
+            } catch (err) {
+                alert('Error tracking application');
+            }
+        }
+
+        async function loadApplications() {
+            try {
+                const res = await fetch(`${API_URL}/api/jobs/track`);
+                const data = await res.json();
+                const html = data.applications.map(app => `
+                    <div class="job-item">
+                        <h3>${app.company}</h3>
+                        <p><strong>Role:</strong> ${app.role}</p>
+                        <p><strong>Status:</strong> ${app.status}</p>
+                        <p><strong>Applied:</strong> ${new Date(app.appliedDate).toLocaleDateString()}</p>
+                    </div>
+                `).join('');
+                document.getElementById('trackerList').innerHTML = html || '<p style="color: var(--text-dim);">No applications tracked yet</p>';
+            } catch (err) {
+                document.getElementById('trackerList').innerHTML = '<div class="error">Error loading applications</div>';
+            }
+        }
+
+        async function saveStory() {
+            const title = document.getElementById('storyTitle').value;
+            const content = document.getElementById('storyContent').value;
+            if (!title || !content) {
+                alert('Please fill all fields');
+                return;
+            }
+            try {
+                const res = await fetch(`${API_URL}/api/prep/stories`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title, situation: content, task: '', action: '', result: '', reflection: '' })
+                });
+                document.getElementById('storyTitle').value = '';
+                document.getElementById('storyContent').value = '';
+                loadStories();
+            } catch (err) {
+                alert('Error saving story');
+            }
+        }
+
+        async function loadStories() {
+            try {
+                const res = await fetch(`${API_URL}/api/prep/stories`);
+                const data = await res.json();
+                const html = data.stories.map(story => `
+                    <div class="job-item">
+                        <h3>${story.title}</h3>
+                        <p>${story.situation}</p>
+                    </div>
+                `).join('');
+                document.getElementById('storyList').innerHTML = html || '<p style="color: var(--text-dim);">No stories yet</p>';
+            } catch (err) {
+                document.getElementById('storyList').innerHTML = '<div class="error">Error loading stories</div>';
+            }
+        }
+
+        // Load dashboard on load
+        loadDashboard();
+    </script>
+</body>
+</html>
