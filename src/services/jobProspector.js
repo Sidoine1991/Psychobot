@@ -176,21 +176,24 @@ class JobProspector {
                 }
 
                 // Store in job_scores table
+                // Note: Using basic columns that exist, extended fields can be added via ALTER TABLE
                 const result = await rdsClient.pool.query(
                     `INSERT INTO psychobot.job_scores
-                     (company, role, overall_score, numeric_score, source, job_url, description, posted_date, status)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                     (company, role, overall_score, numeric_score, dimensions)
+                     VALUES ($1, $2, $3, $4, $5)
                      RETURNING id`,
                     [
                         job.company,
                         job.title,
                         'PENDING', // Will be reviewed
                         initialScore,
-                        job.source,
-                        job.url,
-                        job.description,
-                        job.postedDate,
-                        'PENDING_REVIEW'
+                        JSON.stringify({
+                            source: job.source,
+                            url: job.url,
+                            description: job.description,
+                            postedDate: job.postedDate.toISOString(),
+                            jobType: job.jobType
+                        })
                     ]
                 );
 
