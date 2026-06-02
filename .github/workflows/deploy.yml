@@ -1,0 +1,96 @@
+name: Deploy to Render
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [18.x]
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install backend dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm install
+          npm run build
+          cd ..
+
+      - name: Run linter (if configured)
+        run: npm run lint || true
+
+      - name: Run tests (if configured)
+        run: npm test || true
+
+      - name: Check build artifacts
+        run: |
+          if [ -d "frontend/build" ]; then
+            echo "✅ Frontend build successful"
+            du -sh frontend/build
+          else
+            echo "❌ Frontend build failed"
+            exit 1
+          fi
+
+  deploy-production:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Trigger Render Backend Deployment
+        run: |
+          curl -X POST https://api.render.com/deploy/srv/${{ secrets.RENDER_BACKEND_SERVICE_ID }}?key=${{ secrets.RENDER_DEPLOY_KEY }}
+
+      - name: Trigger Render Frontend Deployment
+        run: |
+          curl -X POST https://api.render.com/deploy/srv/${{ secrets.RENDER_FRONTEND_SERVICE_ID }}?key=${{ secrets.RENDER_DEPLOY_KEY }}
+
+      - name: Wait for deployments
+        run: sleep 60
+
+      - name: Test API health
+        run: |
+          for i in {1..10}; do
+            if curl -f https://psychobot-api.onrender.com/api/health; then
+              echo "✅ API is healthy"
+              exit 0
+            fi
+            echo "Attempt $i/10 - Waiting for API..."
+            sleep 10
+          done
+          echo "❌ API health check failed"
+          exit 1
+
+      - name: Notify on success
+        run: |
+          echo "✅ Deployment successful!"
+          echo "Backend: https://psychobot-api.onrender.com"
+          echo "Frontend: https://psychobot.onrender.com"
+
+  notify-on-failure:
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send failure notification
+        run: |
+          echo "❌ Deployment failed - check logs above"

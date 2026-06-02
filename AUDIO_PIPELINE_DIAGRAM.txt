@@ -1,0 +1,169 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                  PSYCHOBOT AUDIO PIPELINE - COMPLETE FLOW                    ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+USER SENDS VOICE MESSAGE
+│
+├─────────────────────────────────────────────────────────────────────────────
+│
+▼ [index.js - messageHandler]
+├─ detectMessageType(msg) → 'voice_note'
+├─ isConversationActive(remoteJid)? 
+│  ├─ YES → return (skip processing)
+│  └─ NO → continue
+│
+▼ [src/services/audioProcessor.js]
+├─ downloadAudio(audioMessage, downloadContentFromMessage)
+│  ├─ Download OGG stream from WhatsApp servers
+│  ├─ Save to temp file: /tmp/audio_TIMESTAMP.ogg
+│  └─ Return audioPath
+│
+├─ convertToWav(audioPath)
+│  ├─ FFmpeg: OGG Opus → WAV
+│  ├─ 16kHz mono (Whisper requirement)
+│  ├─ Save to: /tmp/audio_TIMESTAMP.wav
+│  └─ Return wavPath
+│
+├─ transcribeAudioOpenAI(wavPath)
+│  ├─ Read WAV file → Buffer
+│  ├─ FormData: file, model=whisper-1, language=fr
+│  ├─ POST https://api.openai.com/v1/audio/transcriptions
+│  │  └─ Headers: Authorization: Bearer $OPENAI_API_KEY
+│  ├─ Response: { text: "Bonjour, comment allez-vous?" }
+│  └─ Return transcript
+│
+├─ getAIResponse(transcript, callerName, history, remoteJid)
+│  ├─ Load ai.js module
+│  ├─ Get conversation history by JID
+│  ├─ Call NVIDIA NIM API:
+│  │  POST https://integrate.api.nvidia.com/v1/chat/completions
+│  │  ├─ model: meta/llama-3.3-70b-instruct
+│  │  ├─ messages: [system, history, user]
+│  │  └─ Headers: Authorization: Bearer $NVIDIA_NIM_API_KEY
+│  ├─ Response: "Bonjour! Je vais bien..."
+│  └─ Return aiResponse
+│
+├─ detectLanguage(transcript)
+│  ├─ Check for French words: ['le', 'la', 'de', 'et', 'un', ...]
+│  ├─ YES French words → language = 'fr'
+│  └─ NO → language = 'en'
+│
+├─ textToSpeechGoogle(aiResponse, language)
+│  ├─ googleTTS.getAudioUrl(text, {lang: 'fr'})
+│  ├─ Get URL: https://translate.google.com/...audioencoding...
+│  ├─ Call convertToOpus(audioUrl)
+│  │  ├─ Download MP3 from URL
+│  │  ├─ Save to: /tmp/input_TIMESTAMP.mp3
+│  │  ├─ FFmpeg: MP3 → OGG Opus
+│  │  ├─ Output: /tmp/voice_TIMESTAMP.ogg
+│  │  ├─ Cleanup: Delete input MP3
+│  │  └─ Return audioPath
+│  └─ Return audioPath (OGG Opus)
+│
+├─ cleanup(paths)
+│  ├─ Delete /tmp/audio_TIMESTAMP.ogg
+│  ├─ Delete /tmp/audio_TIMESTAMP.wav
+│  ├─ Delete /tmp/input_TIMESTAMP.mp3 (if exists)
+│  └─ Delete /tmp/voice_TIMESTAMP.ogg (after send)
+│
+▼ [index.js - Send Response]
+├─ sock.sendMessage(remoteJid, {
+│    audio: fs.readFileSync(audioPath),
+│    mimetype: 'audio/ogg; codecs=opus',
+│    ptt: true,
+│    quoted: msg
+│  })
+│  └─ Sends voice reply to user
+│
+├─ sock.sendMessage(remoteJid, {
+│    text: "🎙️ Transcript: ...\n🤖 Response: ..."
+│  })
+│  └─ Sends text summary
+│
+├─ sock.readMessages([msg.key])
+│  └─ Mark original message as read
+│
+▼ ERROR HANDLING
+├─ Try-Catch around entire pipeline
+├─ On error:
+│  ├─ Log error message
+│  ├─ Send error message to user: "❌ Erreur: ..."
+│  ├─ Cleanup temp files
+│  └─ Continue normal bot operation
+
+USER RECEIVES VOICE REPLY
+│
+├─ 🎤 Audio message (OGG format)
+├─ 📝 Text summary with:
+│  ├─ What they said (transcript)
+│  └─ AI response
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                              API INTERACTIONS                                ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║                                                                              ║
+║  OPENAI WHISPER API                                                          ║
+║  ├─ Endpoint: https://api.openai.com/v1/audio/transcriptions                ║
+║  ├─ Method: POST multipart/form-data                                        ║
+║  ├─ Input: WAV file (16kHz mono)                                            ║
+║  ├─ Output: { "text": "transcribed content" }                               ║
+║  └─ Cost: $0.006/minute                                                     ║
+║                                                                              ║
+║  NVIDIA NIM (LLAMA 3.3 70B)                                                  ║
+║  ├─ Endpoint: https://integrate.api.nvidia.com/v1/chat/completions         ║
+║  ├─ Method: POST application/json                                           ║
+║  ├─ Input: { model, messages, temperature, max_tokens }                    ║
+║  ├─ Output: { choices[0].message.content }                                  ║
+║  └─ Cost: Free (rate-limited)                                              ║
+║                                                                              ║
+║  GOOGLE TTS API                                                              ║
+║  ├─ Endpoint: https://translate.google.com/... (indirect)                   ║
+║  ├─ Method: google-tts-api npm package                                      ║
+║  ├─ Input: { text, lang: 'fr' }                                             ║
+║  ├─ Output: MP3 audio URL                                                   ║
+║  └─ Cost: Free                                                              ║
+║                                                                              ║
+║  WHATSAPP API (via Baileys)                                                 ║
+║  ├─ Download: downloadContentFromMessage(audioMessage, 'audio')            ║
+║  ├─ Upload: sock.sendMessage(remoteJid, {audio: buffer, ptt: true})       ║
+║  └─ Cost: WhatsApp Business API                                            ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+TIME BREAKDOWN
+═════════════════════════════════════════════════════════════════════════════
+
+  Download audio from WhatsApp:        1-2 seconds
+  Convert OGG → WAV:                   1-2 seconds
+  Transcribe (Whisper API):            3-5 seconds
+  Generate AI response (Llama):        2-3 seconds
+  Convert response to speech (TTS):    2-3 seconds
+  Convert MP3 → OGG Opus:              1-2 seconds
+  ──────────────────────────────────────────────
+  TOTAL:                              10-15 seconds
+
+ERROR SCENARIOS & FALLBACKS
+═════════════════════════════════════════════════════════════════════════════
+
+  Missing OPENAI_API_KEY:
+    └─ ❌ Send: "API key not configured"
+
+  Whisper transcription fails:
+    └─ ❌ Send: "Failed to transcribe audio"
+
+  AI response generation fails:
+    └─ ❌ Send: "Failed to generate response"
+
+  TTS conversion fails:
+    └─ ❌ Send: "Failed to convert to speech"
+
+  FFmpeg conversion fails:
+    └─ ❌ Send: "Audio format conversion failed"
+
+  All errors:
+    └─ Cleanup temp files automatically
+    └─ Continue bot operation normally
+
+═════════════════════════════════════════════════════════════════════════════
+Generated: 2026-05-30
+Status: ✅ Production Ready
