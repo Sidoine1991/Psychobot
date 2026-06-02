@@ -29,7 +29,7 @@ const contextManager = require('./src/services/contextManager');
 const commandExecutor = require('./src/services/commandExecutor');
 const rdsClient = require('./src/db/rdsClient');
 
-const NVIDIA_NIM_API_KEY = process.env.NVIDIA_NIM_API_KEY || "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";
+const NVIDIA_NIM_API_KEY = process.env.NVIDIA_NIM_API_KEY;
 const NVIDIA_NIM_BASE = "https://integrate.api.nvidia.com/v1";
 const NVIDIA_NIM_MODEL = process.env.NVIDIA_NIM_MODEL || "meta/llama-3.3-70b-instruct";
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "";
