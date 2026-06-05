@@ -722,13 +722,13 @@ app.post('/send-message', async (req, res) => {
 // ============================================================================
 app.post('/send-file', async (req, res) => {
     try {
-        const { phone, message, file_url, file_name, mime_type } = req.body;
+        const { phone, message, file_url, file_base64, file_name, mime_type } = req.body;
 
-        // Validation
-        if (!phone || !file_url) {
+        // Validation — accepte file_url OU file_base64
+        if (!phone || (!file_url && !file_base64)) {
             return res.status(400).json({
                 success: false,
-                error: 'Missing phone or file_url in request body'
+                error: 'Missing phone or file_url/file_base64 in request body'
             });
         }
 
@@ -743,10 +743,16 @@ app.post('/send-file', async (req, res) => {
         const jid = sock.user.id;
         console.log(`[SEND-FILE] Sending file to bot owner: ${jid}`);
 
-        // Télécharger le fichier depuis l'URL
-        const axios = require('axios');
-        const response = await axios.get(file_url, { responseType: 'arraybuffer' });
-        const fileBuffer = Buffer.from(response.data);
+        // Obtenir le buffer — depuis base64 ou depuis URL
+        let fileBuffer;
+        if (file_base64) {
+            fileBuffer = Buffer.from(file_base64, 'base64');
+            console.log(`[SEND-FILE] Using base64 input (${fileBuffer.length} bytes)`);
+        } else {
+            const axios = require('axios');
+            const response = await axios.get(file_url, { responseType: 'arraybuffer' });
+            fileBuffer = Buffer.from(response.data);
+        }
 
         // Déterminer le type MIME
         const finalMimeType = mime_type || response.headers['content-type'] || 'application/octet-stream';
