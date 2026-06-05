@@ -1,0 +1,17 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: detect-private-key
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-merge-conflict
+
+  - repo: local
+    hooks:
+      - id: detect-secrets
+        name: Detect secrets
+        language: system
+        entry: detect-secrets-hook
+        args: ['--baseline', '.secrets.baseline']
+        exclude: (\.env\.example|\.env\.local\.test|\.secrets\.baseline)
