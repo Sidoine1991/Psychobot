@@ -29,7 +29,7 @@ const contextManager = require('./src/services/contextManager');
 const commandExecutor = require('./src/services/commandExecutor');
 const rdsClient = require('./src/db/rdsClient');
 
-const NVIDIA_NIM_API_KEY = process.env.NVIDIA_NIM_API_KEY || "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";
+const NVIDIA_NIM_API_KEY = process.env.NVIDIA_NIM_API_KEY;
 const NVIDIA_NIM_BASE = "https://integrate.api.nvidia.com/v1";
 const NVIDIA_NIM_MODEL = process.env.NVIDIA_NIM_MODEL || "meta/llama-3.3-70b-instruct";
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "";
@@ -722,13 +722,13 @@ app.post('/send-message', async (req, res) => {
 // ============================================================================
 app.post('/send-file', async (req, res) => {
     try {
-        const { phone, message, file_url, file_name, mime_type } = req.body;
+        const { phone, message, file_url, file_base64, file_name, mime_type } = req.body;
 
-        // Validation
-        if (!phone || !file_url) {
+        // Validation — accepte file_url OU file_base64
+        if (!phone || (!file_url && !file_base64)) {
             return res.status(400).json({
                 success: false,
-                error: 'Missing phone or file_url in request body'
+                error: 'Missing phone or file_url/file_base64 in request body'
             });
         }
 
@@ -743,13 +743,18 @@ app.post('/send-file', async (req, res) => {
         const jid = sock.user.id;
         console.log(`[SEND-FILE] Sending file to bot owner: ${jid}`);
 
-        // Télécharger le fichier depuis l'URL
-        const axios = require('axios');
-        const response = await axios.get(file_url, { responseType: 'arraybuffer' });
-        const fileBuffer = Buffer.from(response.data);
+        // Obtenir le buffer — depuis base64 ou depuis URL
+        let fileBuffer;
+        let finalMimeType = mime_type || 'application/octet-stream';
+        if (file_base64) {
+            fileBuffer = Buffer.from(file_base64, 'base64');
+            console.log(`[SEND-FILE] Using base64 input (${fileBuffer.length} bytes)`);
+        } else {
+            const response = await axios.get(file_url, { responseType: 'arraybuffer' });
+            fileBuffer = Buffer.from(response.data);
+            finalMimeType = mime_type || response.headers['content-type'] || 'application/octet-stream';
+        }
 
-        // Déterminer le type MIME
-        const finalMimeType = mime_type || response.headers['content-type'] || 'application/octet-stream';
         const finalFileName = file_name || 'document';
 
         console.log(`[SEND-FILE] File: ${finalFileName}, MIME: ${finalMimeType}, Size: ${fileBuffer.length} bytes`);
