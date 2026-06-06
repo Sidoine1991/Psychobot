@@ -32,6 +32,21 @@ module.exports = async (msg, sock) => {
     const isDM = remoteJid.endsWith('@s.whatsapp.net');
     const senderId = msg.key.participant || remoteJid;
 
+    // Détecter si le message vient du propriétaire (Sidoine)
+    const isFromMe = msg.key.fromMe === true;
+    if (isFromMe) {
+        // Sidoine vient d'écrire dans cette conversation → marquer activité propriétaire
+        aiService.markOwnerActivity(remoteJid);
+        console.log(`[AutoResponse] Propriétaire actif détecté dans ${remoteJid} — bot en pause sur ce chat`);
+        return; // Ne pas répondre aux propres messages de Sidoine
+    }
+
+    // Si Sidoine a été actif récemment dans cette conversation (< 30 min), le bot ne répond pas
+    if (aiService.isOwnerRecentlyActive(remoteJid)) {
+        console.log(`[AutoResponse] Propriétaire récemment actif dans ${remoteJid} — bot reste en pause`);
+        return;
+    }
+
     // Extraire le texte
     let text = '';
     let isMentioned = false;

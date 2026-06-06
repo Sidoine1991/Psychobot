@@ -116,7 +116,15 @@ async function startBot() {
         try {
             const msg = m.messages[0];
             if (!msg.message) return;
-            if (msg.key.fromMe) return;
+
+            // Détecter les messages sortants du propriétaire (Sidoine) pour marquer son activité
+            if (msg.key.fromMe) {
+                const remoteJid = msg.key.remoteJid;
+                const aiService = require('./src/services/ai');
+                aiService.markOwnerActivity(remoteJid);
+                console.log(`[Bot] Propriétaire actif détecté dans ${remoteJid}`);
+                return; // Ne pas traiter les messages sortants pour les commandes/réactions
+            }
 
             const remoteJid = msg.key.remoteJid;
             let text = "";

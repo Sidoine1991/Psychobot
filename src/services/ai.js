@@ -9,6 +9,21 @@ const MODEL = process.env.NVIDIA_NIM_MODEL || 'meta/llama-3.3-70b-instruct';
 // Mémoire de conversation par JID (clé = remoteJid)
 const conversationMemory = new Map();
 
+// Détection propriétaire actif : dernière activité de Sidoine par JID
+const ownerActivity = new Map(); // { jid: timestamp }
+const OWNER_ACTIVE_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
+
+function markOwnerActivity(jid) {
+    if (jid) ownerActivity.set(jid, Date.now());
+}
+
+function isOwnerRecentlyActive(jid) {
+    if (!jid) return false;
+    const lastActivity = ownerActivity.get(jid);
+    if (!lastActivity) return false;
+    return (Date.now() - lastActivity) < OWNER_ACTIVE_WINDOW_MS;
+}
+
 // Contacts déjà accueillis — persist dans un fichier JSON pour survire aux redémarrages Render
 // Durée : 24h. Passé ce délai le prochain message reçoit à nouveau l'intro.
 const GREETING_TTL_MS = 24 * 60 * 60 * 1000;
@@ -123,12 +138,14 @@ CONTEXTE : Tu es déjà en échange avec cette personne. L'absence de Sidoine a 
 
 RÈGLES POUR CETTE RÉPONSE :
 - Réponds DIRECTEMENT à la question ou au message, sans répéter la présentation initiale.
+- **RÉFÉRENCE LES MESSAGES PRÉCÉDENTS** : Relis l'historique de conversation pour contextualiser ta réponse. Mentionne des détails déjà évoqués ("Comme tu l'as dit tout à l'heure...", "Pour revenir à ta question de ce matin...").
+- **ADAPTE TON TON au contexte** : analyse l'historique pour distinguer :
+  * Discussion professionnelle (projets, services, technique) → ton formel et concis
+  * Discussion familiale/amicale (nouvelles, prises de nouvelles) → ton chaleureux et personnel
+- **SI TU NE PEUX PAS RÉPONDRE** avec certitude à une question technique ou factuelle : NE RÉPONDS PAS. Dis simplement "_*Sidoine*_ saura mieux te répondre sur ce point — je lui transmets ta question 🙏" sans mentionner de "difficulté technique".
 - Engage la conversation de façon naturelle, comme dans un vrai échange humain.
-- Tiens compte de l'historique de la conversation (messages précédents inclus).
 - Réponds dans la langue de l'interlocuteur.
-- Ton : naturel, chaleureux, direct. Comme si tu connaissais déjà la personne.
 - Longueur : adaptée à la question. Court si simple, développé si technique.
-- Si nouveau sujet important : tu peux mentionner que _*Sidoine*_ sera informé, mais pas systématiquement.
 - Émojis avec parcimonie — seulement quand pertinent.
 - Prénom toujours en _*Prénom*_ si utilisé.
 
@@ -181,7 +198,16 @@ async function getAIResponse(prompt, contactName = null, conversationHistory = [
 
         // Injecter l'historique (max 10 derniers messages = 5 échanges)
         if (hasHistory) {
-            messages.push(...conversationHistory.slice(-10));
+            const history = conversationHistory.slice(-10);
+            messages.push(...history);
+
+            // Ajouter une instruction pour utiliser l'historique
+            if (history.length >= 4) {
+                messages.push({
+                    role: 'system',
+                    content: `Tu as accès à l'historique de conversation ci-dessus. UTILISE-LE pour contextualiser ta réponse. Référence des détails déjà mentionnés si pertinent.`
+                });
+            }
         }
 
         messages.push({ role: 'user', content: prompt });
@@ -207,9 +233,10 @@ async function getAIResponse(prompt, contactName = null, conversationHistory = [
     } catch (error) {
         console.error('[AI Service] ❌ Erreur:', error.message);
 
+        // En cas d'erreur API : s'abstenir proprement sans mentionner "difficulté technique"
         const name = contactName ? ` _*${contactName}*_` : '';
-        return `Bonjour${name} ! 🙏 Je rencontre une petite difficulté technique. `
-            + `Votre message est bien reçu et je le transmets à _*Sidoine*_ qui vous répondra dès que possible. 😊`;
+        return `Bonjour${name} ! 🙏 `
+            + `Votre message est bien reçu. Je le transmets à _*Sidoine*_ qui vous répondra personnellement dès que possible. 😊`;
     }
 }
 
@@ -233,4 +260,6 @@ module.exports = {
     clearConversationMemory,
     buildSystemPrompt,
     hasRecentConversation,
+    markOwnerActivity,
+    isOwnerRecentlyActive,
 };
