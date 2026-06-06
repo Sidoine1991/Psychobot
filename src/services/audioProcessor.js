@@ -17,9 +17,13 @@ const { transcribeAudioAWS } = require('./aws-transcribe');
 ffmpeg.setFfmpegPath(ffmpegPath);
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
-const NVIDIA_NIM_API_KEY = process.env.NVIDIA_NIM_API_KEY || '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';
+const NVIDIA_NIM_API_KEY = process.env.NVIDIA_NIM_API_KEY;
 const NVIDIA_NIM_BASE = 'https://integrate.api.nvidia.com/v1';
 const NVIDIA_NIM_MODEL = process.env.NVIDIA_NIM_MODEL || 'meta/llama-3.3-70b-instruct';
+
+if (!NVIDIA_NIM_API_KEY) {
+    console.warn('[AudioProcessor] NVIDIA_NIM_API_KEY manquante — la synthèse audio ne fonctionnera pas.');
+}
 
 // Check if AWS credentials are available
 const AWS_AVAILABLE = process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY;

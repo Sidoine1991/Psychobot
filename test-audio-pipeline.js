@@ -13,8 +13,13 @@ const path = require('path');
 const axios = require('axios');
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const NVIDIA_NIM_API_KEY = process.env.NVIDIA_NIM_API_KEY || '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';
+const NVIDIA_NIM_API_KEY = process.env.NVIDIA_NIM_API_KEY;
 const NVIDIA_NIM_BASE = 'https://integrate.api.nvidia.com/v1';
+
+if (!NVIDIA_NIM_API_KEY) {
+    console.error('❌ NVIDIA_NIM_API_KEY manquante. Configurez-la dans .env');
+    process.exit(1);
+}
 
 // Color output
 const colors = {

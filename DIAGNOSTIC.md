@@ -17,11 +17,11 @@
   - Cliquer "Restart Service"
 
 ### 2. **NVIDIA API Key invalide ou expirée** ⚠️
-- La clé hardcodée peut être expirée
+- La clé doit être configurée dans les variables d'environnement Render
 - **Solution**: 
-  - Vérifier la clé: `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`
-  - Si expirée, générer nouvelle clé depuis NVIDIA
-  - Mettre à jour dans Render env vars
+  - Vérifier que `NVIDIA_NIM_API_KEY` est configurée dans Render Dashboard → Environment
+  - Si expirée, générer nouvelle clé depuis [NVIDIA NIM Console](https://build.nvidia.com/explore/discover)
+  - Mettre à jour dans Render env vars puis redémarrer le service
 
 ### 3. **Bot n'a pas accès au nouvel handler** ⚠️
 - Le code de `autoResponse.js` peut ne pas être actif

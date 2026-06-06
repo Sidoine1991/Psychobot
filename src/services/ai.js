@@ -2,9 +2,14 @@ const fetch = require('node-fetch');
 const fs = require('fs');
 const path = require('path');
 
-const NVIDIA_API_KEY = process.env.NVIDIA_NIM_API_KEY || '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';
+const NVIDIA_API_KEY = process.env.NVIDIA_NIM_API_KEY;
 const NVIDIA_API_URL = 'https://integrate.api.nvidia.com/v1';
 const MODEL = process.env.NVIDIA_NIM_MODEL || 'meta/llama-3.3-70b-instruct';
+
+if (!NVIDIA_API_KEY) {
+    console.error('[AI Service] ❌ NVIDIA_NIM_API_KEY non configurée — l\'assistant ne pourra pas fonctionner.');
+    console.error('[AI Service] Configurez-la dans Render Dashboard → Environment → NVIDIA_NIM_API_KEY');
+}
 
 // Mémoire de conversation par JID (clé = remoteJid)
 const conversationMemory = new Map();
