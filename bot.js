@@ -15,6 +15,7 @@ const { Boom } = require("@hapi/boom");
 const onceViewHandler = require('./src/handlers/onceView');
 const autoReactionHandler = require('./src/handlers/autoReaction');
 const autoResponseHandler = require('./src/handlers/autoResponse');
+const { setOwnerActive } = require('./src/db/conversationState');
 
 // Session directory
 const SESSION_DIR = './session';
@@ -117,13 +118,14 @@ async function startBot() {
             const msg = m.messages[0];
             if (!msg.message) return;
 
-            // Détecter les messages sortants du propriétaire (Sidoine) pour marquer son activité
+            // Si Sidoine répond lui-même, marquer la conversation comme active
             if (msg.key.fromMe) {
-                const remoteJid = msg.key.remoteJid;
-                const aiService = require('./src/services/ai');
-                aiService.markOwnerActivity(remoteJid);
-                console.log(`[Bot] Propriétaire actif détecté dans ${remoteJid}`);
-                return; // Ne pas traiter les messages sortants pour les commandes/réactions
+                const jid = msg.key.remoteJid;
+                if (jid && jid.endsWith('@s.whatsapp.net')) {
+                    setOwnerActive(jid);
+                    console.log(`[Bot] Sidoine actif sur ${jid} — auto-reply suspendu 15 min`);
+                }
+                return;
             }
 
             const remoteJid = msg.key.remoteJid;

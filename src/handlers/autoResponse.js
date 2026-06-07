@@ -1,5 +1,6 @@
 const aiService = require('../services/ai');
 const db = require('../../database');
+const { isConversationActive } = require('../db/conversationState');
 
 // Détecter si le message demande à laisser un message / agenda
 const LEAVE_MSG_KEYWORDS = [
@@ -72,6 +73,12 @@ module.exports = async (msg, sock) => {
     const contactName = resolveContactName(msg, contactJid);
 
     console.log(`[AutoResponse] Message de ${contactName} (${contactJid}): ${text.substring(0, 60)}`);
+
+    // Si Sidoine a pris la main dans cette conversation (< 15 min), ne pas répondre
+    if (isDM && isConversationActive(contactJid)) {
+        console.log(`[AutoResponse] Sidoine actif sur ${contactJid} — auto-reply ignoré`);
+        return;
+    }
 
     try {
         await sock.sendPresenceUpdate('composing', remoteJid);
