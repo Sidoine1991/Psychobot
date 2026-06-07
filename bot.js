@@ -11,11 +11,92 @@ const pino = require('pino');
 const path = require('path');
 const { Boom } = require("@hapi/boom");
 
+const axios = require('axios');
+
 // Handlers
 const onceViewHandler = require('./src/handlers/onceView');
 const autoReactionHandler = require('./src/handlers/autoReaction');
 const autoResponseHandler = require('./src/handlers/autoResponse');
 const { setOwnerActive } = require('./src/db/conversationState');
+
+// TradBOT approval — forward OUI/NON au pipeline
+const AI_SERVER = process.env.AI_SERVER_URL || 'http://127.0.0.1:8000';
+const OWNER_NUMBER = process.env.OWNER_PHONE || '2290196911346';
+
+const _YES = new Set(['oui', 'yes', 'o', 'y', '1', 'ok', 'valider', 'valide', 'go', '✅', '👍']);
+const _NO  = new Set(['non', 'no', 'n', '0', 'skip', 'annuler', 'annule', '❌', '👎']);
+
+// Patterns: "OUI BTCUSD", "NON Boom 1000 Index", "OUI", "BTCUSD BUY OUI", ...
+function parseTradingApproval(text) {
+    const t = text.trim();
+    const words = t.split(/\s+/);
+
+    // Premier ou dernier mot = réponse
+    const first = words[0].toLowerCase().replace(/[^a-z0-9✅❌👍👎]/g, '');
+    const last  = words[words.length - 1].toLowerCase().replace(/[^a-z0-9✅❌👍👎]/g, '');
+
+    let answer = null;
+    let symbolWords = [];
+
+    if (_YES.has(first) || _NO.has(first)) {
+        answer = _YES.has(first) ? 'yes' : 'no';
+        symbolWords = words.slice(1);
+    } else if (_YES.has(last) || _NO.has(last)) {
+        answer = _YES.has(last) ? 'yes' : 'no';
+        symbolWords = words.slice(0, -1);
+    } else {
+        return null;
+    }
+
+    // Extraire le symbole du reste (ex: "BTCUSD", "Boom 1000 Index", "DERIV:BOOM_300_INDEX")
+    // Filtrer les mots parasites (BUY, SELL, direction…)
+    const noise = new Set(['buy', 'sell', 'achat', 'vente', 'signal', '#1', '#2', '#3']);
+    const symWords = symbolWords.filter(w => !noise.has(w.toLowerCase()));
+    const symbol = symWords.join(' ').trim() || null;
+
+    return { answer, symbol };
+}
+
+async function handleTradingApproval(sock, remoteJid, text) {
+    const parsed = parseTradingApproval(text);
+    if (!parsed) return false;
+
+    const { answer, symbol } = parsed;
+
+    // Si pas de symbole explicite, chercher un ordre en attente
+    let finalSymbol = symbol;
+    if (!finalSymbol) {
+        try {
+            const r = await axios.get(`${AI_SERVER}/pending-order`, { timeout: 5000 });
+            const orders = r.data?.orders || [];
+            // Prendre le premier ordre "ready" en attente d'approbation
+            const pending = orders.find(o => o.status === 'ready' || o.status === 'pending');
+            if (pending) finalSymbol = pending.symbol;
+        } catch (e) { /* ignore */ }
+    }
+
+    if (!finalSymbol) {
+        await sock.sendMessage(remoteJid, {
+            text: `⚠️ *TradBOT* : Réponse "${answer === 'yes' ? 'OUI' : 'NON'}" reçue mais aucun symbole trouvé.\nRépondez avec le symbole: ex. *OUI BTCUSD*`
+        });
+        return true;
+    }
+
+    try {
+        await axios.post(`${AI_SERVER}/approval`, { symbol: finalSymbol, answer }, { timeout: 5000 });
+        const emoji = answer === 'yes' ? '✅' : '❌';
+        await sock.sendMessage(remoteJid, {
+            text: `${emoji} *TradBOT* : ${answer === 'yes' ? 'Validation' : 'Refus'} enregistré pour *${finalSymbol}*`
+        });
+        console.log(`[TradBOT] Approbation ${answer} → ${finalSymbol}`);
+        return true;
+    } catch (e) {
+        await sock.sendMessage(remoteJid, {
+            text: `❌ *TradBOT* : Erreur envoi approbation (AI server inaccessible?)\n${e.message}`
+        });
+        return true;
+    }
+}
 
 // Session directory
 const SESSION_DIR = './session';
@@ -118,17 +199,41 @@ async function startBot() {
             const msg = m.messages[0];
             if (!msg.message) return;
 
-            // Si Sidoine répond lui-même, marquer la conversation comme active
+            // Messages envoyés par Sidoine depuis son propre téléphone
             if (msg.key.fromMe) {
                 const jid = msg.key.remoteJid;
                 if (jid && jid.endsWith('@s.whatsapp.net')) {
                     setOwnerActive(jid);
                     console.log(`[Bot] Sidoine actif sur ${jid} — auto-reply suspendu 15 min`);
                 }
+                // Vérifier si c'est une approbation TradBOT (OUI/NON signal)
+                // Sidoine répond à lui-même (conversation avec le bot = même JID que lui)
+                const selfJid = sock.user?.id;
+                const selfBase = selfJid?.split(':')[0] + '@s.whatsapp.net';
+                const isSelfChat = jid === selfBase;
+                if (isSelfChat) {
+                    let ownerText = '';
+                    if (msg.message?.conversation) ownerText = msg.message.conversation;
+                    else if (msg.message?.extendedTextMessage) ownerText = msg.message.extendedTextMessage.text;
+                    if (ownerText) await handleTradingApproval(sock, jid, ownerText);
+                }
                 return;
             }
 
+            // Approbation TradBOT : détecter OUI/NON uniquement si c'est Sidoine (owner) qui répond
             const remoteJid = msg.key.remoteJid;
+            const senderNumber = (msg.key.participant || remoteJid).split('@')[0].split(':')[0];
+            const isOwner = senderNumber.includes(OWNER_NUMBER) || OWNER_NUMBER.includes(senderNumber);
+            if (isOwner && remoteJid.endsWith('@s.whatsapp.net')) {
+                let approvalText = '';
+                if (msg.message?.conversation) approvalText = msg.message.conversation;
+                else if (msg.message?.extendedTextMessage) approvalText = msg.message.extendedTextMessage.text;
+                if (approvalText) {
+                    const handled = await handleTradingApproval(sock, remoteJid, approvalText);
+                    if (handled) return; // Ne pas traiter comme message normal
+                }
+            }
+
             let text = "";
             if (msg.message.conversation) {
                 text = msg.message.conversation;
