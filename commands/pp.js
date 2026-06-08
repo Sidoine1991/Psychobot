@@ -11,7 +11,7 @@ module.exports = {
             const isGroup = remoteJid.endsWith("@g.us");
 
             let targetJid;
-            const OWNER_PN = "237696814391";
+            const OWNER_PN = "2290196911346";
             const OWNER_LID = "250865332039895";
 
             if (isGroup && msg.message?.extendedTextMessage?.contextInfo?.quotedMessage) {

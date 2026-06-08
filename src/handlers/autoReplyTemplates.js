@@ -1,7 +1,7 @@
 // Auto-Reply Response Templates
 // Contextual responses based on message type and owner activity
 
-const OWNER_JID = process.env.OWNER_NUMBER || "237696814391";
+const OWNER_JID = process.env.OWNER_NUMBER || "2290196911346";
 
 function getAutoReplyTemplate(decision, messageType, userMessage = '') {
     const templates = {

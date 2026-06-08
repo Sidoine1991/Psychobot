@@ -16,7 +16,7 @@ module.exports = {
             const cleanJid = (jid) => jid ? jid.split(':')[0].split('@')[0] : "";
             const sender = msg.key.participant || msg.participant || msg.key.remoteJid;
             const senderClean = cleanJid(sender);
-            const OWNER_PN = "237696814391";
+            const OWNER_PN = "2290196911346";
             const OWNER_LID = "250865332039895";
 
             const senderIsAdmin = groupMetadata.participants.some(p => {

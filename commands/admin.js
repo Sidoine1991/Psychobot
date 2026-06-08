@@ -17,7 +17,7 @@ module.exports = {
         const cleanJid = (jid) => jid ? jid.split(':')[0].split('@')[0] : "";
         const msgSender = msg.key.participant || msg.participant || msg.key.remoteJid;
         const msgSenderClean = cleanJid(msgSender);
-        const OWNER_PN = "237696814391";
+        const OWNER_PN = "2290196911346";
         const OWNER_LID = "250865332039895";
 
         const groupMetadata = remoteJid.endsWith("@g.us") ? await sock.groupMetadata(remoteJid) : null;
