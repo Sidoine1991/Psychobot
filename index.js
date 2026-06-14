@@ -46,6 +46,9 @@ const contextManager = require('./src/services/contextManager');
 const commandExecutor = require('./src/services/commandExecutor');
 const rdsClient = require('./src/db/rdsClient');
 
+// Persistent chat history (owner-accessible via !historique)
+const chatHistory = require('./src/services/chatHistory');
+
 const NVIDIA_NIM_API_KEY = process.env.NVIDIA_NIM_API_KEY;
 const NVIDIA_NIM_BASE = "https://integrate.api.nvidia.com/v1";
 const NVIDIA_NIM_MODEL = process.env.NVIDIA_NIM_MODEL || "meta/llama-3.3-70b-instruct";
@@ -1228,6 +1231,38 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
             msg.message?.imageMessage?.caption ||
             msg.message?.videoMessage?.caption || "";
 
+        // --- PERSISTENT CHAT HISTORY (private conversations only) ---
+        if (!remoteJid.endsWith('@g.us') && !remoteJid.endsWith('@broadcast')) {
+            const msgType = detectMessageType(msg.message);
+            const histRole = isFromOwner ? 'owner' : 'user';
+            const histContent = text || `[${msgType}]`;
+            const histName = msg.pushName || null;
+            chatHistory.recordMessage(remoteJid, histName, histRole, histContent, msgType === 'text' ? 'text' : msgType);
+        }
+
+        // --- FORWARD TO OWNER (messages from others, private only) ---
+        if (!isFromOwner && !remoteJid.endsWith('@g.us') && !remoteJid.endsWith('@broadcast') && sock?.user) {
+            try {
+                const ownerJid = OWNER_PN + '@s.whatsapp.net';
+                // Don't forward if this IS the owner's own chat with the bot
+                if (remoteJid !== ownerJid) {
+                    const senderName = msg.pushName || msgSenderClean;
+                    const msgType = detectMessageType(msg.message);
+                    const preview = text
+                        ? (text.length > 300 ? text.substring(0, 300) + '…' : text)
+                        : `[${msgType}]`;
+                    const notif = `📨 *Nouveau message*\n`
+                        + `👤 *${senderName}*\n`
+                        + `📱 +${msgSenderClean}\n`
+                        + `━━━━━━━━━━━━━━\n`
+                        + `${preview}`;
+                    await sock.sendMessage(ownerJid, { text: notif });
+                }
+            } catch (e) {
+                console.error('[Forward] Error:', e.message);
+            }
+        }
+
         console.log(`[MSG] From ${remoteJid} (${msg.pushName}): ${text.substring(0, 50)}`);
 
         // --- ANTILINK ENFORCEMENT ---
@@ -1346,6 +1381,7 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
 
                         const textSummary = `🎙️ *Transcript*:\n_"${transcript}"_\n\n🤖 *Response*:\n${response}`;
                         await sock.sendMessage(remoteJid, { text: textSummary });
+                        chatHistory.recordMessage(remoteJid, msg.pushName || null, 'bot', `[audio] ${response}`, 'audio');
 
                         audioProcessor.cleanup([audioPath]);
                         if (readReceiptsEnabled) await sock.readMessages([msg.key]);
@@ -1430,6 +1466,7 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
                     const reply = await aiModule.getAIResponse(text, callerName, history, remoteJid);
                     const formattedReply = `🤖 *Assistant de Sidoine*\n\n${reply}`;
                     await sock.sendMessage(remoteJid, { text: formattedReply });
+                    chatHistory.recordMessage(remoteJid, callerName, 'bot', reply);
 
                     if (readReceiptsEnabled) {
                         await sock.readMessages([msg.key]);
