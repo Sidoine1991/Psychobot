@@ -1571,7 +1571,8 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
                     const aiModule = require('./src/services/ai');
                     const history = aiModule.getConversationHistory(remoteJid);
                     const reply = await aiModule.getAIResponse(text, callerName, history, remoteJid);
-                    const formattedReply = `🤖 *Assistant de Sidoine*\n\n${reply}`;
+                    // SMART AUTO-REPLY: Change from generic 🤖 to context-aware with Sidoine absence notice
+                    const formattedReply = `📝 *Nota: Sidoine n'est pas là actuellement.*\n\n${reply}`;
                     await sock.sendMessage(remoteJid, { text: formattedReply });
                     chatHistory.recordMessage(remoteJid, callerName, 'bot', reply);
 
@@ -1862,58 +1863,28 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
     });
 
     // --- AI CALL HANDLER (Smart Digital Secretary) ---
+    // DISABLED AUDIO: No longer sends automatic voice notes on missed calls
+    // Reason: Contacts found 4-second audio clips annoying/intrusive
+    // Alternative: Owner gets text notification only
     sock.ev.on('call', async (callEvents) => {
         for (const call of callEvents) {
             // Check for missed, rejected or timeout statuses
             if (call.status === 'timeout' || call.status === 'reject' || (call.status === 'terminate' && !call.isGroup)) {
                 const callerId = call.from;
                 const callerName = '+' + callerId.split('@')[0];
-                console.log(chalk.yellow(`[Call] Missed/Rejected call from ${callerId}`));
+                console.log(chalk.yellow(`[Call] Missed/Rejected call from ${callerId} (no auto-reply audio)`));
 
                 try {
-                    // 1. Générer une excuse professionnelle via NVIDIA NIM
-                    let aiText = "Désolé, je ne peux pas répondre pour le moment. Je vous rappelle dès que possible.";
-                    try {
-                        aiText = await getAIResponse(
-                            `Génère UNE SEULE phrase très courte (max 15 mots) et professionnelle pour informer l'appelant que Sidoine est occupé et ne peut pas répondre à l'appel. Sois direct et poli.`,
-                            "Tu es l'assistant vocal de Sidoine. Réponds uniquement avec la phrase demandée, sans guillemets ni explication."
-                        );
-                        // Nettoyer les guillemets éventuels
-                        aiText = aiText.replace(/^["«»]|["«»]$/g, '').trim();
-                    } catch (aiErr) {
-                        console.error('[Call AI Error]:', aiErr.message);
-                    }
-
-                    // 2. Convert to Voice Note (Google TTS)
-                    const audioUrl = googleTTS.getAudioUrl(aiText, {
-                        lang: 'fr',
-                        slow: false,
-                        host: 'https://translate.google.com',
-                    });
-
-                    // 3. Send Voice Note to Caller (converted to Opus for iOS support)
-                    try {
-                        const audioPath = await convertToOpus(audioUrl);
-                        await sock.sendMessage(callerId, {
-                            audio: { url: audioPath },
-                            mimetype: 'audio/ogg; codecs=opus',
-                            ptt: true
-                        });
-                        fs.unlinkSync(audioPath);
-                    } catch (e) {
-                        console.error('[Call Voice Error]', e.message);
-                    }
-
-                    // 4. Notifier le propriétaire avec heure locale
+                    // Notify owner ONLY (no audio sent to caller)
                     const ownerJid = (sock.user?.id || OWNER_PN + "@s.whatsapp.net").split(':')[0] + "@s.whatsapp.net";
                     const callTime = new Date().toLocaleString('fr-FR', { timeZone: 'Africa/Porto-Novo' });
+
                     await sock.sendMessage(ownerJid, {
-                        text: `📞 *Appel Manqué (Auto-Reply)*\n━━━━━━━━━━━━━━\n👤 *De :* @${callerId.split('@')[0]}\n🕐 *Heure :* ${callTime}\n📝 *Message envoyé :* "${aiText.trim()}"`,
+                        text: `📞 *Appel Manqué (Silencieux)*\n━━━━━━━━━━━━━━\n👤 *De :* @${callerId.split('@')[0]}\n🕐 *Heure :* ${callTime}\n✅ *Status :* Aucun message audio envoyé`,
                         mentions: [callerId]
                     });
 
-                    console.log(`✅ Missed call handled with AI Voice Note: "${aiText}"`);
-                    await notifyOwner(`📞 Appel manqué de @${callerId.split('@')[0]} géré par l'IA.`);
+                    console.log(`✅ Missed call logged (silent - no audio sent)`);
 
                 } catch (err) {
                     console.error("[Call Handler Error]:", err.message);
