@@ -813,6 +813,113 @@ app.post('/send-file', async (req, res) => {
     }
 });
 
+// ============================================================================
+// WEBHOOK POUR RECEVOIR LES ALERTES PULLBACK DEPUIS TRADBOT
+// ============================================================================
+// Écoute les événements Pullback Entry (PULLBACK_START, DETECTED, RESUMPTION, TRADE_OPENED)
+// Relaie automatiquement vers le propriétaire du bot via WhatsApp
+// ============================================================================
+
+app.post('/pullback-webhook', async (req, res) => {
+    try {
+        const event = req.body;
+        const {
+            phase,                    // pullback_start, pullback_detected, resumption_confirmed, trade_opened, trade_failed
+            symbol,
+            direction,                // BUY or SELL
+            message_preview           // Formatted message from TradBOT
+        } = event;
+
+        console.log(`[PULLBACK-WEBHOOK] Received: ${phase} — ${symbol} ${direction}`);
+
+        // Validation
+        if (!phase || !symbol || !direction) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing required fields: phase, symbol, direction'
+            });
+        }
+
+        // Vérifier que le bot est connecté
+        if (!sock || !sock.user) {
+            console.warn('[PULLBACK-WEBHOOK] ⚠️ Bot not connected to WhatsApp');
+            return res.status(503).json({
+                success: false,
+                error: 'Bot not connected to WhatsApp'
+            });
+        }
+
+        // Obtenir le message formaté
+        // Si TradBOT envoie déjà un message formaté, l'utiliser
+        // Sinon, construire un message basique
+        let finalMessage = message_preview;
+        if (!finalMessage) {
+            finalMessage = `[${phase.toUpperCase()}] ${symbol}\n${direction}`;
+        }
+
+        // Envoyer au propriétaire du bot
+        const jid = sock.user.id;
+
+        console.log(`[PULLBACK-WEBHOOK] Sending to owner (${jid}): ${finalMessage.substring(0, 50)}...`);
+
+        await sock.sendMessage(jid, { text: finalMessage });
+
+        console.log(`[PULLBACK-WEBHOOK] ✅ Alert sent successfully`);
+
+        res.status(200).json({
+            success: true,
+            phase: phase,
+            symbol: symbol,
+            direction: direction,
+            message: 'Pullback alert received and forwarded',
+            jid: jid,
+            timestamp: new Date().toISOString()
+        });
+
+    } catch (error) {
+        console.error('[PULLBACK-WEBHOOK ERROR]:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// ============================================================================
+// WEBHOOK DEBUG ENDPOINT
+// ============================================================================
+// Test endpoint pour vérifier que le webhook fonctionne
+// ============================================================================
+
+app.get('/pullback-webhook/test', async (req, res) => {
+    try {
+        if (!sock || !sock.user) {
+            return res.status(503).json({
+                success: false,
+                error: 'Bot not connected'
+            });
+        }
+
+        // Envoyer un message test
+        const jid = sock.user.id;
+        const testMessage = `🧪 TEST WEBHOOK\n${new Date().toISOString()}\nPullback alert system is working!`;
+
+        await sock.sendMessage(jid, { text: testMessage });
+
+        res.json({
+            success: true,
+            message: 'Test message sent',
+            timestamp: new Date().toISOString()
+        });
+
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
