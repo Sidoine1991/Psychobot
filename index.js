@@ -840,12 +840,12 @@ app.post('/pullback-webhook', async (req, res) => {
             });
         }
 
-        // Vérifier que le bot est connecté
-        if (!sock || !sock.user) {
-            console.warn('[PULLBACK-WEBHOOK] ⚠️ Bot not connected to WhatsApp');
+        // Vérifier que le bot existe (peut ne pas avoir sock.user si en cours de connexion)
+        if (!sock) {
+            console.warn('[PULLBACK-WEBHOOK] Bot socket not initialized yet');
             return res.status(503).json({
                 success: false,
-                error: 'Bot not connected to WhatsApp'
+                error: 'Bot initializing, try again in a few seconds'
             });
         }
 
@@ -858,7 +858,11 @@ app.post('/pullback-webhook', async (req, res) => {
         }
 
         // Envoyer au propriétaire du bot
-        const jid = sock.user.id;
+        // Utiliser sock.user.id si disponible, sinon OWNER_PN
+        let jid = OWNER_PN + "@s.whatsapp.net";
+        if (sock.user && sock.user.id) {
+            jid = sock.user.id;
+        }
 
         console.log(`[PULLBACK-WEBHOOK] Sending to owner (${jid}): ${finalMessage.substring(0, 50)}...`);
 
@@ -893,10 +897,10 @@ app.post('/pullback-webhook', async (req, res) => {
 
 app.get('/pullback-webhook/test', async (req, res) => {
     try {
-        if (!sock || !sock.user) {
+        if (!sock) {
             return res.status(503).json({
                 success: false,
-                error: 'Bot not connected'
+                error: 'Bot socket not initialized'
             });
         }
 
