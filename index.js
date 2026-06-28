@@ -1024,7 +1024,7 @@ async function startBot() {
     }
 
     // Priorité 2 : backup local session_backup.txt (si creds.json absent)
-    if (!fs.existsSync(credsPath) && fs.existsSync(backupPath)) {
+    if (!skipSessionData && !fs.existsSync(credsPath) && fs.existsSync(backupPath)) {
         console.log(chalk.blue("🔹 Backup local détecté. Restauration session..."));
         try {
             const sessionBuffer = Buffer.from(fs.readFileSync(backupPath, 'utf-8').trim(), 'base64').toString('utf-8');
@@ -1149,6 +1149,12 @@ async function startBot() {
                 console.log(chalk.red("🛑 Logged Out (401 Unauthorized). Clearing session."));
                 try {
                     fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
+                    // Delete session_backup to prevent infinite restore loop
+                    const backupPath = path.join(__dirname, 'session_backup.txt');
+                    if (fs.existsSync(backupPath)) {
+                        fs.unlinkSync(backupPath);
+                        console.log(chalk.yellow("🗑️ session_backup.txt deleted."));
+                    }
                     // Write a flag file to skip SESSION_DATA reload on next startup
                     fs.writeFileSync(path.join(__dirname, '.skip-session-data'), 'true');
                     console.log(chalk.green("✅ Session cleared. Skipping SESSION_DATA on next boot."));
