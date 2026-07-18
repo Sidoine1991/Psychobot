@@ -137,8 +137,16 @@ async function syncSessionToRender() {
         const credsPath = path.join(AUTH_FOLDER, 'creds.json');
         if (!fs.existsSync(credsPath)) return;
 
-        const creds = fs.readFileSync(credsPath, 'utf-8');
-        const sessionBase64 = Buffer.from(creds).toString('base64');
+        const credsRaw = fs.readFileSync(credsPath, 'utf-8');
+        const credsData = JSON.parse(credsRaw);
+
+        // SAFETY: Never sync incomplete/corrupted sessions to Render
+        if (credsData.registered === false) {
+            console.log(chalk.yellow("⚠️ [Render API] Session non enregistrée (registered=false) — sync ignoré."));
+            return;
+        }
+
+        const sessionBase64 = Buffer.from(credsRaw).toString('base64');
 
         if (process.env.SESSION_DATA === sessionBase64) return;
 
@@ -1028,11 +1036,60 @@ async function startBot() {
         console.log(chalk.blue("🔹 Backup local détecté. Restauration session..."));
         try {
             const sessionBuffer = Buffer.from(fs.readFileSync(backupPath, 'utf-8').trim(), 'base64').toString('utf-8');
-            JSON.parse(sessionBuffer);
-            fs.writeFileSync(credsPath, sessionBuffer);
-            console.log(chalk.green("✅ Session restaurée depuis session_backup.txt."));
+            const backupData = JSON.parse(sessionBuffer);
+
+            // SAFETY: Don't restore from a backup that is also corrupted
+            if (backupData.registered === false && backupData.account) {
+                console.log(chalk.red("❌ Backup also corrupted (registered=false). Skipping restore."));
+                fs.unlinkSync(backupPath);
+            } else {
+                fs.writeFileSync(credsPath, sessionBuffer);
+                console.log(chalk.green("✅ Session restaurée depuis session_backup.txt."));
+            }
         } catch (e) {
             console.error(chalk.red("❌ Backup invalide:"), e.message);
+        }
+    }
+
+    // --- CORRUPTED SESSION DETECTION ---
+    // If creds.json exists but has "registered": false with account data, the session
+    // is in an incomplete state. WhatsApp will accept the QR scan but immediately
+    // disconnect because the Signal protocol handshake fails. Purge and force fresh QR.
+    if (fs.existsSync(credsPath)) {
+        try {
+            const credsData = JSON.parse(fs.readFileSync(credsPath, 'utf-8'));
+            if (credsData.registered === false && credsData.account) {
+                console.log(chalk.red.bold("🚨 SESSION CORROMPUE DÉTECTÉE (registered=false avec account data)!"));
+                console.log(chalk.red("   → La session est dans un état incomplet. WhatsApp déconnecte immédiatement."));
+                console.log(chalk.yellow("   → Nettoyage automatique en cours..."));
+
+                // Purge local session
+                fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
+                try { fs.unlinkSync(path.join(__dirname, 'session_backup.txt')); } catch (e) {}
+                try { fs.unlinkSync(path.join(__dirname, '.skip-session-data')); } catch (e) {}
+
+                console.log(chalk.green("✅ Session locale purgée."));
+
+                // Purge SESSION_DATA env var on Render if API key available
+                const apiKey = process.env.RENDER_API_KEY;
+                const serviceId = process.env.RENDER_SERVICE_ID;
+                if (apiKey && serviceId) {
+                    try {
+                        await axios.patch(`https://api.render.com/v1/services/${serviceId}/env-vars`,
+                            [{ key: "SESSION_DATA", value: "" }],
+                            { headers: { Authorization: `Bearer ${apiKey}`, "Accept": "application/json", "Content-Type": "application/json" } }
+                        );
+                        console.log(chalk.green("✅ SESSION_DATA purgée sur Render."));
+                    } catch (e) {
+                        console.error(chalk.yellow("⚠️ Impossible de purger SESSION_DATA sur Render:"), e.message);
+                        console.log(chalk.yellow("   → Purge manuellement la variable SESSION_DATA dans le dashboard Render."));
+                    }
+                }
+
+                console.log(chalk.cyan("🔄 Nouveau QR sera généré automatiquement..."));
+            }
+        } catch (e) {
+            // creds.json was already handled by the JSON.parse check above
         }
     }
 
@@ -1087,7 +1144,16 @@ async function startBot() {
         try {
             const credsPath = path.join(AUTH_FOLDER, 'creds.json');
             if (fs.existsSync(credsPath)) {
-                const sessionB64 = Buffer.from(fs.readFileSync(credsPath, 'utf-8')).toString('base64');
+                const credsRaw = fs.readFileSync(credsPath, 'utf-8');
+                const credsData = JSON.parse(credsRaw);
+
+                // SAFETY: Only backup complete sessions
+                if (credsData.registered === false) {
+                    console.log(chalk.yellow('[Session Backup] ⏭ Session incomplète (registered=false) — backup ignoré'));
+                    return;
+                }
+
+                const sessionB64 = Buffer.from(credsRaw).toString('base64');
                 // Backup fichier local
                 fs.writeFileSync(path.join(__dirname, 'session_backup.txt'), sessionB64);
                 // Sync Render si API key disponible
