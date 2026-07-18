@@ -23,6 +23,7 @@ module.exports = {
             "💼 K_JOBAGENT": ["careerops", "jobclip"],
             "🛠️ UTILS": ["about", "ping", "sticker", "say", "extract", "audio", "av", "chipmunks", "pp"],
             "🎮 JEUX": ["coinflip", "guess", "motgame", "listgame"],
+            "🧠 JEUX EDUCATIFS (🎮)": ["🎮 jouer", "🎮 stats", "🎮 suggestion", "🎮 leaderboard", "🎮 help"],
             "👥 GROUPE": ["tagall", "add", "kick", "promote", "demote", "group", "delete"],
             "👑 ADMIN": ["admin", "antilink", "antidelete", "logout", "session", "statusall", "statusdown"]
         };

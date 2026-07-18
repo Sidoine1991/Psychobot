@@ -1355,6 +1355,13 @@ async function startBot() {
 • !coinflip - Pile ou face
 • !motgame - Jeu de mots
 
+🧠 *Jeux Educatifs (prefix 🎮)*
+• 🎮 jouer <riddles|memory|words|maths|patterns> - Jouer
+• 🎮 stats - Vos statistiques
+• 🎮 suggestion - Suggestion d'activite
+• 🎮 leaderboard - Classement
+• 🎮 help - Aide jeux
+
 🎵 *Media*
 • !play <titre> - Telecharger audio
 • !audio - Extraire audio d'une video
@@ -1472,6 +1479,23 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
             msg.message?.extendedTextMessage?.text ||
             msg.message?.imageMessage?.caption ||
             msg.message?.videoMessage?.caption || "";
+
+        // --- GAME COMMAND HANDLER (prefix 🎮) ---
+        if (text.startsWith('🎮')) {
+            const gameCmd = commands.get('🎮');
+            if (gameCmd) {
+                const gameArgs = text.slice(1).trim().split(/ +/);
+                const replyWithTag = async (s, j, m, t) => {
+                    await s.sendMessage(j, { text: t, mentions: [m.key.participant || m.key.remoteJid] }, { quoted: m });
+                };
+                try {
+                    await gameCmd.run({ sock, msg, replyWithTag, args: gameArgs });
+                } catch (e) {
+                    console.error('[GAME] Erreur:', e.message);
+                }
+                return;
+            }
+        }
 
         // --- PERSISTENT CHAT HISTORY (private conversations only) ---
         if (!remoteJid.endsWith('@g.us') && !remoteJid.endsWith('@broadcast')) {
