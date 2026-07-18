@@ -41,7 +41,6 @@ function getAutoReplyTemplate(decision, messageType, userMessage = '') {
 function buildGenericAbsentReply(userMessage) {
     let contextLine = '';
     if (userMessage && userMessage.length > 0) {
-        // Extract first 2 lines as context
         const lines = userMessage.split('\n').slice(0, 2);
         const snippet = lines.join('\n').substring(0, 80);
         contextLine = `\n\n_Votre message: "${snippet}..."_`;
