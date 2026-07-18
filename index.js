@@ -138,15 +138,8 @@ async function syncSessionToRender() {
         if (!fs.existsSync(credsPath)) return;
 
         const credsRaw = fs.readFileSync(credsPath, 'utf-8');
-        const credsData = JSON.parse(credsRaw);
-        const credsAge = Date.now() - fs.statSync(credsPath).mtimeMs;
 
-        // SAFETY: Never sync old corrupted sessions to Render
-        // Fresh pairings (registered=false, < 120s) are allowed — they'll complete on reconnect
-        if (credsData.registered === false && credsData.account && credsAge > 120000) {
-            console.log(chalk.yellow("⚠️ [Render API] Session corrompue ancienne — sync ignoré."));
-            return;
-        }
+        // SAFETY: Always sync — Baileys manages registration internally
 
         const sessionBase64 = Buffer.from(credsRaw).toString('base64');
 
@@ -1040,69 +1033,20 @@ async function startBot() {
             const sessionBuffer = Buffer.from(fs.readFileSync(backupPath, 'utf-8').trim(), 'base64').toString('utf-8');
             const backupData = JSON.parse(sessionBuffer);
 
-            // SAFETY: Don't restore from a backup that is old AND corrupted
-            // Fresh backups (< 120s) might be mid-pairing — allow them
-            const backupAge = Date.now() - fs.statSync(backupPath).mtimeMs;
-            if (backupData.registered === false && backupData.account && backupAge > 120000) {
-                console.log(chalk.red(`❌ Backup also corrupted (registered=false, age: ${Math.floor(backupAge / 1000)}s). Skipping restore.`));
-                fs.unlinkSync(backupPath);
-            } else {
+            // SAFETY: Always restore — Baileys manages registration internally
                 fs.writeFileSync(credsPath, sessionBuffer);
                 console.log(chalk.green("✅ Session restaurée depuis session_backup.txt."));
-            }
         } catch (e) {
             console.error(chalk.red("❌ Backup invalide:"), e.message);
         }
     }
 
     // --- CORRUPTED SESSION DETECTION ---
-    // If creds.json exists but has "registered": false with account data, the session
-    // is in an incomplete state. HOWEVER, after a fresh QR scan, Baileys saves creds
-    // with registered=false and then triggers error 515 (restart required). The next
-    // reconnect should complete registration. So we only purge if the session is OLD
-    // (modified > 120s ago) — fresh pairings are left alone.
-    if (fs.existsSync(credsPath)) {
-        try {
-            const credsData = JSON.parse(fs.readFileSync(credsPath, 'utf-8'));
-            const credsStat = fs.statSync(credsPath);
-            const credsAge = Date.now() - credsStat.mtimeMs;
-
-            if (credsData.registered === false && credsData.account && credsAge > 120000) {
-                console.log(chalk.red.bold("🚨 SESSION CORROMPUE DÉTECTÉE (registered=false, age: " + Math.floor(credsAge / 1000) + "s)!"));
-                console.log(chalk.red("   → La session est dans un état incomplet depuis trop longtemps."));
-                console.log(chalk.yellow("   → Nettoyage automatique en cours..."));
-
-                // Purge local session
-                fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
-                try { fs.unlinkSync(path.join(__dirname, 'session_backup.txt')); } catch (e) {}
-                try { fs.unlinkSync(path.join(__dirname, '.skip-session-data')); } catch (e) {}
-
-                console.log(chalk.green("✅ Session locale purgée."));
-
-                // Purge SESSION_DATA env var on Render if API key available
-                const apiKey = process.env.RENDER_API_KEY;
-                const serviceId = process.env.RENDER_SERVICE_ID;
-                if (apiKey && serviceId) {
-                    try {
-                        await axios.patch(`https://api.render.com/v1/services/${serviceId}/env-vars`,
-                            [{ key: "SESSION_DATA", value: "" }],
-                            { headers: { Authorization: `Bearer ${apiKey}`, "Accept": "application/json", "Content-Type": "application/json" } }
-                        );
-                        console.log(chalk.green("✅ SESSION_DATA purgée sur Render."));
-                    } catch (e) {
-                        console.error(chalk.yellow("⚠️ Impossible de purger SESSION_DATA sur Render:"), e.message);
-                        console.log(chalk.yellow("   → Purge manuellement la variable SESSION_DATA dans le dashboard Render."));
-                    }
-                }
-
-                console.log(chalk.cyan("🔄 Nouveau QR sera généré automatiquement..."));
-            } else if (credsData.registered === false && credsData.account) {
-                console.log(chalk.yellow(`⚠️ Session non enregistrée mais récente (${Math.floor(credsAge / 1000)}s) — laisser le pairing se finaliser.`));
-            }
-        } catch (e) {
-            // creds.json was already handled by the JSON.parse check above
-        }
-    }
+    // DISABLED: The automatic purge was destroying valid sessions.
+    // After a QR scan, Baileys saves creds with registered=false and completes
+    // registration during the error-515 reconnect cycle. If the bot restarts
+    // for any reason (deploy, network blip) after 120s, the purge would destroy
+    // the valid session. Users can manually purge via /logout or /new-qr.
 
     console.log(chalk.cyan('[LOG] Loading auth state...'));
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
@@ -1156,15 +1100,9 @@ async function startBot() {
             const credsPath = path.join(AUTH_FOLDER, 'creds.json');
             if (fs.existsSync(credsPath)) {
                 const credsRaw = fs.readFileSync(credsPath, 'utf-8');
-                const credsData = JSON.parse(credsRaw);
-                const credsAge = Date.now() - fs.statSync(credsPath).mtimeMs;
 
-                // SAFETY: Skip only if session is old AND incomplete (true corruption)
-                // Fresh pairings (registered=false, < 120s) are expected — back them up
-                if (credsData.registered === false && credsData.account && credsAge > 120000) {
-                    console.log(chalk.yellow('[Session Backup] ⏭ Session corrompue ancienne — backup ignoré'));
-                    return;
-                }
+                // SAFETY: Always backup — Baileys manages registration internally.
+                // The registered=false state is normal after QR scan until 515 reconnect completes.
 
                 const sessionB64 = Buffer.from(credsRaw).toString('base64');
                 // Backup fichier local
