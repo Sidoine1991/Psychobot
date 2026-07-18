@@ -139,10 +139,12 @@ async function syncSessionToRender() {
 
         const credsRaw = fs.readFileSync(credsPath, 'utf-8');
         const credsData = JSON.parse(credsRaw);
+        const credsAge = Date.now() - fs.statSync(credsPath).mtimeMs;
 
-        // SAFETY: Never sync incomplete/corrupted sessions to Render
-        if (credsData.registered === false) {
-            console.log(chalk.yellow("⚠️ [Render API] Session non enregistrée (registered=false) — sync ignoré."));
+        // SAFETY: Never sync old corrupted sessions to Render
+        // Fresh pairings (registered=false, < 120s) are allowed — they'll complete on reconnect
+        if (credsData.registered === false && credsData.account && credsAge > 120000) {
+            console.log(chalk.yellow("⚠️ [Render API] Session corrompue ancienne — sync ignoré."));
             return;
         }
 
@@ -1032,15 +1034,17 @@ async function startBot() {
     }
 
     // Priorité 2 : backup local session_backup.txt (si creds.json absent)
-    if (!skipSessionData && !fs.existsSync(credsPath) && fs.existsSync(backupPath)) {
+    if (!fs.existsSync(credsPath) && fs.existsSync(backupPath)) {
         console.log(chalk.blue("🔹 Backup local détecté. Restauration session..."));
         try {
             const sessionBuffer = Buffer.from(fs.readFileSync(backupPath, 'utf-8').trim(), 'base64').toString('utf-8');
             const backupData = JSON.parse(sessionBuffer);
 
-            // SAFETY: Don't restore from a backup that is also corrupted
-            if (backupData.registered === false && backupData.account) {
-                console.log(chalk.red("❌ Backup also corrupted (registered=false). Skipping restore."));
+            // SAFETY: Don't restore from a backup that is old AND corrupted
+            // Fresh backups (< 120s) might be mid-pairing — allow them
+            const backupAge = Date.now() - fs.statSync(backupPath).mtimeMs;
+            if (backupData.registered === false && backupData.account && backupAge > 120000) {
+                console.log(chalk.red(`❌ Backup also corrupted (registered=false, age: ${Math.floor(backupAge / 1000)}s). Skipping restore.`));
                 fs.unlinkSync(backupPath);
             } else {
                 fs.writeFileSync(credsPath, sessionBuffer);
@@ -1050,17 +1054,26 @@ async function startBot() {
             console.error(chalk.red("❌ Backup invalide:"), e.message);
         }
     }
+        } catch (e) {
+            console.error(chalk.red("❌ Backup invalide:"), e.message);
+        }
+    }
 
     // --- CORRUPTED SESSION DETECTION ---
     // If creds.json exists but has "registered": false with account data, the session
-    // is in an incomplete state. WhatsApp will accept the QR scan but immediately
-    // disconnect because the Signal protocol handshake fails. Purge and force fresh QR.
+    // is in an incomplete state. HOWEVER, after a fresh QR scan, Baileys saves creds
+    // with registered=false and then triggers error 515 (restart required). The next
+    // reconnect should complete registration. So we only purge if the session is OLD
+    // (modified > 120s ago) — fresh pairings are left alone.
     if (fs.existsSync(credsPath)) {
         try {
             const credsData = JSON.parse(fs.readFileSync(credsPath, 'utf-8'));
-            if (credsData.registered === false && credsData.account) {
-                console.log(chalk.red.bold("🚨 SESSION CORROMPUE DÉTECTÉE (registered=false avec account data)!"));
-                console.log(chalk.red("   → La session est dans un état incomplet. WhatsApp déconnecte immédiatement."));
+            const credsStat = fs.statSync(credsPath);
+            const credsAge = Date.now() - credsStat.mtimeMs;
+
+            if (credsData.registered === false && credsData.account && credsAge > 120000) {
+                console.log(chalk.red.bold("🚨 SESSION CORROMPUE DÉTECTÉE (registered=false, age: " + Math.floor(credsAge / 1000) + "s)!"));
+                console.log(chalk.red("   → La session est dans un état incomplet depuis trop longtemps."));
                 console.log(chalk.yellow("   → Nettoyage automatique en cours..."));
 
                 // Purge local session
@@ -1087,6 +1100,8 @@ async function startBot() {
                 }
 
                 console.log(chalk.cyan("🔄 Nouveau QR sera généré automatiquement..."));
+            } else if (credsData.registered === false && credsData.account) {
+                console.log(chalk.yellow(`⚠️ Session non enregistrée mais récente (${Math.floor(credsAge / 1000)}s) — laisser le pairing se finaliser.`));
             }
         } catch (e) {
             // creds.json was already handled by the JSON.parse check above
@@ -1146,10 +1161,12 @@ async function startBot() {
             if (fs.existsSync(credsPath)) {
                 const credsRaw = fs.readFileSync(credsPath, 'utf-8');
                 const credsData = JSON.parse(credsRaw);
+                const credsAge = Date.now() - fs.statSync(credsPath).mtimeMs;
 
-                // SAFETY: Only backup complete sessions
-                if (credsData.registered === false) {
-                    console.log(chalk.yellow('[Session Backup] ⏭ Session incomplète (registered=false) — backup ignoré'));
+                // SAFETY: Skip only if session is old AND incomplete (true corruption)
+                // Fresh pairings (registered=false, < 120s) are expected — back them up
+                if (credsData.registered === false && credsData.account && credsAge > 120000) {
+                    console.log(chalk.yellow('[Session Backup] ⏭ Session corrompue ancienne — backup ignoré'));
                     return;
                 }
 
