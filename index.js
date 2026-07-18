@@ -1161,32 +1161,59 @@ async function startBot() {
 
             broadcast({ type: 'status', message: `Disconnected: ${reason || 'Error'}` });
             isStarting = false;
+            const errorRaw = JSON.stringify(lastDisconnect?.error || {});
 
-            if (reason === DisconnectReason.loggedOut || reason === 401) {
-                console.log(chalk.red("🛑 Logged Out (401 Unauthorized). Clearing session."));
-                try {
-                    fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
-                    // Delete session_backup to prevent infinite restore loop
-                    const backupPath = path.join(__dirname, 'session_backup.txt');
-                    if (fs.existsSync(backupPath)) {
-                        fs.unlinkSync(backupPath);
-                        console.log(chalk.yellow("🗑️ session_backup.txt deleted."));
-                    }
-                    // Write a flag file to skip SESSION_DATA reload on next startup
-                    fs.writeFileSync(path.join(__dirname, '.skip-session-data'), 'true');
-                    console.log(chalk.green("✅ Session cleared. Skipping SESSION_DATA on next boot."));
-                } catch (e) {
-                    console.error(chalk.red("❌ Failed to clear session:"), e.message);
-                }
-                // Don't exit, let reconnect handler try again
-                isStarting = false;
-                // DON'T reset reconnectAttempts - this prevents re-triggering RENDER_STABILISATION
-                reconnectAttempts++; // Mark as attempted retry
-                setTimeout(() => startBot(), 5000);
-            } else if (reason === DisconnectReason.connectionReplaced || reason === 440 || reason === 405) {
+            if (reason === DisconnectReason.connectionReplaced || reason === 440 || reason === 405) {
                 console.log(chalk.red("⚠️ Session Conflict. Restarting..."));
                 sock.end();
                 process.exit(1);
+            } else if (reason === DisconnectReason.loggedOut || reason === 401) {
+                // Log full error for debugging
+                console.log(chalk.red("🛑 401 received. Error details:"));
+                console.log(chalk.gray("  message:"), lastDisconnect?.error?.message);
+                console.log(chalk.gray("  raw:"), errorRaw);
+
+                // 401 can be a real logout OR a "device_removed" conflict from WhatsApp.
+                // On device_removed, the session is still valid — don't purge, just retry.
+                const errorStr = (lastDisconnect?.error?.message || '') + errorRaw;
+                const isDeviceRemoved = errorStr.includes('device_removed') ||
+                                         errorStr.includes('conflict');
+
+                if (isDeviceRemoved) {
+                    console.log(chalk.yellow("⚠️ device_removed conflict — NOT purging session."));
+                    if (reconnectAttempts >= 10) {
+                        console.log(chalk.red.bold("🛑 Too many device_removed retries (10+). WhatsApp is actively rejecting this device."));
+                        console.log(chalk.cyan("💡 Solutions:"));
+                        console.log(chalk.cyan("   1. Ouvre WhatsApp > Appareils liés > vérifie que le bot est autorisé"));
+                        console.log(chalk.cyan("   2. Supprime TOUTES les sessions WhatsApp Web liées"));
+                        console.log(chalk.cyan("   3. Relie le bot via QR de nouveau"));
+                        console.log(chalk.cyan("   4. Render est un datacenter — WhatsApp peut bloquer les IP de cloud"));
+                        // Don't purge, but stop retrying to avoid infinite loop
+                        return;
+                    }
+                    isStarting = false;
+                    reconnectAttempts++;
+                    const delay = Math.min(5000 * reconnectAttempts, 60000);
+                    console.log(chalk.yellow(`🔄 Retrying in ${delay}ms... (attempt ${reconnectAttempts}/10)`));
+                    setTimeout(() => startBot(), delay);
+                } else {
+                    console.log(chalk.red("🛑 Genuine logout (401). Clearing session."));
+                    try {
+                        fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
+                        const backupPath = path.join(__dirname, 'session_backup.txt');
+                        if (fs.existsSync(backupPath)) {
+                            fs.unlinkSync(backupPath);
+                            console.log(chalk.yellow("🗑️ session_backup.txt deleted."));
+                        }
+                        fs.writeFileSync(path.join(__dirname, '.skip-session-data'), 'true');
+                        console.log(chalk.green("✅ Session cleared. Skipping SESSION_DATA on next boot."));
+                    } catch (e) {
+                        console.error(chalk.red("❌ Failed to clear session:"), e.message);
+                    }
+                    isStarting = false;
+                    reconnectAttempts++;
+                    setTimeout(() => startBot(), 5000);
+                }
             } else {
                 reconnectAttempts++;
                 lastConnectedAt = 0;
