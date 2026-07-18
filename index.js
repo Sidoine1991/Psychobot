@@ -1054,10 +1054,6 @@ async function startBot() {
             console.error(chalk.red("❌ Backup invalide:"), e.message);
         }
     }
-        } catch (e) {
-            console.error(chalk.red("❌ Backup invalide:"), e.message);
-        }
-    }
 
     // --- CORRUPTED SESSION DETECTION ---
     // If creds.json exists but has "registered": false with account data, the session
