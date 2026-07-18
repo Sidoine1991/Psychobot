@@ -303,14 +303,16 @@ app.get('/code', async (req, res) => {
     try { fs.rmSync(pairFolder, { recursive: true, force: true }); } catch (e) {}
     try { fs.mkdirSync(pairFolder, { recursive: true }); } catch (e) {}
 
+    const pairLogger = pino({ level: 'fatal' }).child({ level: 'fatal' });
+
     try {
         const { state, saveCreds } = await useMultiFileAuthState(pairFolder);
         const pairSock = makeWASocket({
             auth: {
                 creds: state.creds,
-                keys: makeCacheableSignalKeyStore(state.keys, logger),
+                keys: makeCacheableSignalKeyStore(state.keys, pairLogger),
             },
-            logger,
+            logger: pairLogger,
             browser: Browsers.macOS('Desktop-2'),
             printQRInTerminal: false,
         });
