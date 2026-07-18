@@ -287,14 +287,93 @@ app.get('/pair', (req, res) => {
     res.sendFile(__path + '/pair.html');
 });
 
-// Pairing code endpoint — For now, redirect to QR method (more stable)
-app.get('/code', (req, res) => {
-    console.log(chalk.yellow('[Pair] Phone pairing requested - use /qr instead'));
-    return res.status(400).json({
-        error: 'Phone number pairing not yet implemented',
-        solution: 'Please use QR code method',
-        redirect: '/qr'
-    });
+// Pairing code endpoint — creates a temp Baileys connection for phone-number pairing
+app.get('/code', async (req, res) => {
+    let num = req.query.number;
+    if (!num) {
+        return res.status(400).json({ error: 'Missing ?number= parameter' });
+    }
+
+    console.log(chalk.cyan(`[Pair] Pairing code requested for ${num}`));
+
+    // End current socket if connected
+    try { if (sock) sock.end(); } catch (e) {}
+
+    const pairFolder = path.join(__dirname, 'auth_info_baileys');
+    try { fs.rmSync(pairFolder, { recursive: true, force: true }); } catch (e) {}
+    try { fs.mkdirSync(pairFolder, { recursive: true }); } catch (e) {}
+
+    try {
+        const { state, saveCreds } = await useMultiFileAuthState(pairFolder);
+        const pairSock = makeWASocket({
+            auth: {
+                creds: state.creds,
+                keys: makeCacheableSignalKeyStore(state.keys, logger),
+            },
+            logger,
+            browser: Browsers.macOS('Desktop-2'),
+            printQRInTerminal: false,
+        });
+
+        pairSock.ev.on('creds.update', saveCreds);
+        pairSock.ev.on('connection.update', async (update) => {
+            const { connection, lastDisconnect } = update;
+
+            if (connection === 'open') {
+                console.log(chalk.green('[Pair] Connection open — copying session...'));
+                await delay(5000);
+
+                const credsSrc = path.join(pairFolder, 'creds.json');
+                const credsDst = path.join(AUTH_FOLDER, 'creds.json');
+                try {
+                    fs.mkdirSync(AUTH_FOLDER, { recursive: true });
+                    fs.copyFileSync(credsSrc, credsDst);
+                    console.log(chalk.green('[Pair] Session saved to', AUTH_FOLDER));
+
+                    // Backup and sync to Render
+                    const credsRaw = fs.readFileSync(credsDst, 'utf-8');
+                    const sessionB64 = Buffer.from(credsRaw).toString('base64');
+                    fs.writeFileSync(path.join(__dirname, 'session_backup.txt'), sessionB64);
+                    if (pairSock?.user) await syncSessionToRender();
+
+                    // Clean up temp folder
+                    try { fs.rmSync(pairFolder, { recursive: true, force: true }); } catch (e) {}
+
+                    // Restart the main bot
+                    isStarting = false;
+                    reconnectAttempts = 0;
+                    setTimeout(() => startBot(), 2000);
+                } catch (e) {
+                    console.error(chalk.red('[Pair] Error copying session:'), e.message);
+                }
+            }
+
+            if (connection === 'close') {
+                const reason = lastDisconnect?.error?.output?.statusCode;
+                console.log(chalk.yellow(`[Pair] Connection closed: ${reason}`));
+                if (reason === DisconnectReason.restartRequired) {
+                    console.log(chalk.yellow('[Pair] Restart required — retrying...'));
+                    const { state: s2, saveCreds: sc2 } = await useMultiFileAuthState(pairFolder);
+                    // Re-request will happen via the connection loop
+                }
+            }
+        });
+
+        // Request pairing code
+        num = num.replace(/[^0-9]/g, '');
+        await delay(2000);
+        const code = await pairSock.requestPairingCode(num);
+        console.log(chalk.green(`[Pair] Code: ${code}`));
+        if (!res.headersSent) {
+            res.json({ code });
+        }
+    } catch (err) {
+        console.error(chalk.red('[Pair] Error:'), err.message);
+        try { fs.rmSync(pairFolder, { recursive: true, force: true }); } catch (e) {}
+        if (!res.headersSent) {
+            res.status(500).json({ error: 'Pairing failed', details: err.message });
+        }
+    }
 });
 
 // Force new QR code endpoint — disconnect and regenerate QR
