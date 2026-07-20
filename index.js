@@ -298,6 +298,8 @@ app.get('/code', async (req, res) => {
 
     // End current socket if connected
     try { if (sock) sock.end(); } catch (e) {}
+    // Wait for socket to fully close
+    await new Promise(r => setTimeout(r, 2000));
 
     const pairFolder = path.join(__dirname, 'auth_info_baileys');
     try { fs.rmSync(pairFolder, { recursive: true, force: true }); } catch (e) {}
@@ -307,7 +309,17 @@ app.get('/code', async (req, res) => {
 
     try {
         const { state, saveCreds } = await useMultiFileAuthState(pairFolder);
+        // Fetch latest WhatsApp Web version (required for pairing to work)
+        let pairVersion;
+        try {
+            const pairFetchResult = await fetchLatestBaileysVersion();
+            pairVersion = pairFetchResult.version;
+        } catch (e) {
+            console.log(chalk.yellow('[Pair] Version fetch timeout, using fallback'));
+            pairVersion = [2, 3000, 1015901307];
+        }
         const pairSock = makeWASocket({
+            version: pairVersion,
             auth: {
                 creds: state.creds,
                 keys: makeCacheableSignalKeyStore(state.keys, pairLogger),
@@ -315,6 +327,7 @@ app.get('/code', async (req, res) => {
             logger: pairLogger,
             browser: Browsers.macOS('Desktop-2'),
             printQRInTerminal: false,
+            connectTimeoutMs: 30000,
         });
 
         pairSock.ev.on('creds.update', saveCreds);
@@ -363,8 +376,22 @@ app.get('/code', async (req, res) => {
 
         // Request pairing code
         num = num.replace(/[^0-9]/g, '');
-        await delay(2000);
-        const code = await pairSock.requestPairingCode(num);
+        console.log(chalk.cyan(`[Pair] Requesting code for ${num}...`));
+        await delay(3000);
+        let code;
+        try {
+            code = await Promise.race([
+                pairSock.requestPairingCode(num),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Pairing code timeout')), 30000))
+            ]);
+        } catch (codeErr) {
+            console.error(chalk.red('[Pair] requestPairingCode failed:'), codeErr.message);
+            try { fs.rmSync(pairFolder, { recursive: true, force: true }); } catch (e) {}
+            if (!res.headersSent) {
+                return res.status(500).json({ error: 'Pairing code generation failed', details: codeErr.message });
+            }
+            return;
+        }
         console.log(chalk.green(`[Pair] Code: ${code}`));
         if (!res.headersSent) {
             res.json({ code });
