@@ -3,29 +3,40 @@ services:
     name: psychobot-api
     runtime: node
     plan: standard
-    startCommand: npm install && npm start
-    buildCommand: npm install && cd frontend && npm install && npm run build && cd ..
+    startCommand: node index.js
+    buildCommand: npm install
     envVars:
       - key: NODE_ENV
         value: production
-      - key: API_PORT
-        value: 3000
+      - key: PORT
+        value: 10000
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_KEY
         sync: false
-      - key: CORS_ORIGIN
-        value: https://psychobot.onrender.com
-
-  - type: static_site
-    name: psychobot
-    staticPublishPath: ./frontend/build
-    buildCommand: cd frontend && npm install && npm run build
-    routes:
-      - path: /api
-        destination: https://psychobot-api.onrender.com/api
-      - path: /*
-        destination: /index.html
-    envVars:
-      - key: REACT_APP_API_URL
-        value: https://psychobot-api.onrender.com
+      - key: SESSION_DATA
+        sync: false
+      - key: RENDER_API_KEY
+        sync: false
+      - key: RENDER_SERVICE_ID
+        sync: false
+      - key: OWNER_NUMBER
+        sync: false
+      - key: OWNER_IDS
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: NVIDIA_NIM_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: AI_SERVER_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+    disk:
+      name: psychobot-session
+      mountPath: /opt/render/project/src/session
+      sizeGB: 1

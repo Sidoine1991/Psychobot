@@ -129,10 +129,6 @@ async function notifyOwner(text) {
 }
 
 async function syncSessionToRender() {
-    const apiKey = process.env.RENDER_API_KEY;
-    const serviceId = process.env.RENDER_SERVICE_ID;
-    if (!apiKey || !serviceId) return;
-
     try {
         const credsPath = path.join(AUTH_FOLDER, 'creds.json');
         if (!fs.existsSync(credsPath)) return;
@@ -145,18 +141,75 @@ async function syncSessionToRender() {
 
         if (process.env.SESSION_DATA === sessionBase64) return;
 
-        console.log(chalk.blue("📤 [Render API] Sauvegarde automatique de la session..."));
-        await axios.patch(`https://api.render.com/v1/services/${serviceId}/env-vars`,
-            [{ key: "SESSION_DATA", value: sessionBase64 }],
-            { headers: { Authorization: `Bearer ${apiKey}`, "Accept": "application/json", "Content-Type": "application/json" } }
-        );
-        console.log(chalk.green("✅ [Render API] Session sauvegardée ! Le bot va redémarrer pour appliquer la persistance."));
+        // Method 1: Render API (if credentials available)
+        const apiKey = process.env.RENDER_API_KEY;
+        const serviceId = process.env.RENDER_SERVICE_ID;
+        if (apiKey && serviceId) {
+            try {
+                console.log(chalk.blue("📤 [Render API] Sauvegarde automatique de la session..."));
+                await axios.patch(`https://api.render.com/v1/services/${serviceId}/env-vars`,
+                    [{ key: "SESSION_DATA", value: sessionBase64 }],
+                    { headers: { Authorization: `Bearer ${apiKey}`, "Accept": "application/json", "Content-Type": "application/json" } }
+                );
+                console.log(chalk.green("✅ [Render API] Session sauvegardée via API !"));
+                return;
+            } catch (apiErr) {
+                console.error(chalk.yellow("⚠️ [Render API] Échec API, fallback local:"), apiErr.response?.data || apiErr.message);
+            }
+        }
+
+        // Method 2: Local backup file (always save as fallback)
+        const backupPath = path.join(__dirname, 'session_backup.txt');
+        fs.writeFileSync(backupPath, sessionBase64, 'utf-8');
+        console.log(chalk.green("✅ [Session] Backup local sauvegardé (session_backup.txt)"));
     } catch (error) {
-        console.error(chalk.red("❌ [Render API] Échec de la sauvegarde:"), error.response?.data || error.message);
+        console.error(chalk.red("❌ [Session] Échec sauvegarde:"), error.message);
+    }
+}
+
+// Backup entire session folder contents as base64 (for Render persistence)
+async function backupFullSession() {
+    try {
+        if (!fs.existsSync(AUTH_FOLDER)) return;
+        const files = fs.readdirSync(AUTH_FOLDER);
+        const backup = {};
+        for (const file of files) {
+            const filePath = path.join(AUTH_FOLDER, file);
+            if (fs.statSync(filePath).isFile()) {
+                backup[file] = fs.readFileSync(filePath, 'utf-8');
+            }
+        }
+        if (Object.keys(backup).length === 0) return;
+        const backupB64 = Buffer.from(JSON.stringify(backup)).toString('base64');
+        const backupPath = path.join(__dirname, 'session_full_backup.txt');
+        fs.writeFileSync(backupPath, backupB64, 'utf-8');
+        console.log(chalk.green(`✅ [Session] Backup complet (${files.length} fichiers)`));
+    } catch (e) {
+        console.error(chalk.yellow("⚠️ [Session] Backup complet échoué:"), e.message);
+    }
+}
+
+// Restore full session from backup
+async function restoreFullSession() {
+    const backupPath = path.join(__dirname, 'session_full_backup.txt');
+    if (!fs.existsSync(backupPath)) return false;
+    try {
+        const b64 = fs.readFileSync(backupPath, 'utf-8').trim();
+        const data = JSON.parse(Buffer.from(b64, 'base64').toString('utf-8'));
+        if (!fs.existsSync(AUTH_FOLDER)) fs.mkdirSync(AUTH_FOLDER, { recursive: true });
+        for (const [file, content] of Object.entries(data)) {
+            fs.writeFileSync(path.join(AUTH_FOLDER, file), content, 'utf-8');
+        }
+        console.log(chalk.green(`✅ [Session] Session complète restaurée (${Object.keys(data).length} fichiers)`));
+        return true;
+    } catch (e) {
+        console.error(chalk.red("❌ [Session] Restauration complète échouée:"), e.message);
+        return false;
     }
 }
 
 let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 10; // Limite max pour éviter les boucles infinies
 let isStarting = false;
 let latestQR = null;
 let lastConnectedAt = 0;
@@ -415,10 +468,15 @@ app.get('/new-qr', (req, res) => {
             sock.end();
         }
 
-        // Clear session folder
+        // Clear session folder + backups
         try {
             fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
-            console.log(chalk.green('[NewQR] Session cleared'));
+            const backupPaths = ['session_backup.txt', 'session_full_backup.txt'];
+            for (const bp of backupPaths) {
+                const p = path.join(__dirname, bp);
+                if (fs.existsSync(p)) fs.unlinkSync(p);
+            }
+            console.log(chalk.green('[NewQR] Session + backups cleared'));
         } catch (e) {
             console.error('[NewQR] Failed to clear session:', e.message);
         }
@@ -429,11 +487,11 @@ app.get('/new-qr', (req, res) => {
             check_qr_at: '/qr'
         });
 
-        // Restart bot after 3s without stabilisation delay
+        // Restart bot after 3s
         setTimeout(() => {
             console.log(chalk.yellow('[NewQR] Restarting bot for new QR...'));
             isStarting = false;
-            reconnectAttempts = 1; // Skip stabilisation delay
+            reconnectAttempts = 1;
             startBot().catch(err => console.error('[NewQR Restart Error]:', err));
         }, 3000);
 
@@ -754,10 +812,15 @@ app.get('/logout', (req, res) => {
             sock.end();
         }
 
-        // Clear session folder
+        // Clear session folder + all backups
         try {
             fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
-            console.log(chalk.green('[Logout] Session cleared'));
+            const backupPaths = ['session_backup.txt', 'session_full_backup.txt'];
+            for (const bp of backupPaths) {
+                const p = path.join(__dirname, bp);
+                if (fs.existsSync(p)) fs.unlinkSync(p);
+            }
+            console.log(chalk.green('[Logout] Session + backups cleared'));
         } catch (e) {
             console.error('[Logout] Failed to clear session:', e.message);
         }
@@ -1092,10 +1155,9 @@ async function startBot() {
     // RENDER SETTLING DELAY (Crucial to avoid session conflicts during deployment handover)
     const isRender = process.env.RENDER || process.env.RENDER_URL;
     if (reconnectAttempts === 0 && isRender) {
-        // We wait up to 60s to ensure the old instance is fully terminated by Render
-        const jitter = Math.floor(Math.random() * 20000) + 30000; // 30-50s jitter
-        console.log(chalk.yellow(`⏳ RENDER STABILISATION: Waiting ${Math.floor(jitter / 1000)}s to avoid conflicts...`));
-        await sleep(jitter);
+        // Wait 5s only — long delays cause QR timeouts
+        console.log(chalk.yellow(`⏳ RENDER STABILISATION: Waiting 5s...`));
+        await sleep(5000);
     }
 
     console.log(chalk.cyan("🚀 Connexion au socket WhatsApp..."));
@@ -1156,6 +1218,14 @@ async function startBot() {
     // for any reason (deploy, network blip) after 120s, the purge would destroy
     // the valid session. Users can manually purge via /logout or /new-qr.
 
+    // Priorité 3 : backup complet (creds + pre-keys + sessions)
+    if (!skipSessionData && !fs.existsSync(credsPath)) {
+        const restored = await restoreFullSession();
+        if (restored) {
+            console.log(chalk.green("✅ Session complète restaurée depuis session_full_backup.txt."));
+        }
+    }
+
     console.log(chalk.cyan('[LOG] Loading auth state...'));
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
     console.log(chalk.cyan('[LOG] Auth state loaded'));
@@ -1203,8 +1273,10 @@ async function startBot() {
 
     sock.ev.on("creds.update", async () => {
         await saveCreds();
-        // Sauvegarder session dans backup local (résiste aux redémarrages Render)
         try {
+            // Backup complet: creds.json + toutes les clés (pre-keys, sessions, etc.)
+            await backupFullSession();
+            // Aussi sauvegarder creds.json seul pour compatibilité
             const credsPath = path.join(AUTH_FOLDER, 'creds.json');
             if (fs.existsSync(credsPath)) {
                 const credsRaw = fs.readFileSync(credsPath, 'utf-8');
@@ -1215,9 +1287,9 @@ async function startBot() {
                 const sessionB64 = Buffer.from(credsRaw).toString('base64');
                 // Backup fichier local
                 fs.writeFileSync(path.join(__dirname, 'session_backup.txt'), sessionB64);
-                // Sync Render si API key disponible
-                if (sock?.user) await syncSessionToRender();
             }
+            // Sync Render API si configuré
+            if (sock?.user) await syncSessionToRender();
         } catch (e) {
             console.error('[Session Backup]', e.message);
         }
@@ -1325,9 +1397,16 @@ async function startBot() {
             } else {
                 reconnectAttempts++;
                 lastConnectedAt = 0;
-                const delay = Math.min(3000 * reconnectAttempts, 30000);
-                console.log(chalk.yellow(`🔄 Reconnecting (Attempt ${reconnectAttempts}) in ${delay}ms...`));
-                setTimeout(() => startBot(), delay);
+                if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                    console.log(chalk.red.bold(`🛑 MAX RECONNECT ATTEMPTS (${MAX_RECONNECT_ATTEMPTS}) REACHED. Waiting 5min before retry...`));
+                    broadcast({ type: 'status', message: 'Too many retries. Pausing 5min...' });
+                    reconnectAttempts = 0;
+                    setTimeout(() => startBot(), 5 * 60 * 1000);
+                } else {
+                    const delay = Math.min(3000 * reconnectAttempts, 30000);
+                    console.log(chalk.yellow(`🔄 Reconnecting (Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}) in ${delay}ms...`));
+                    setTimeout(() => startBot(), delay);
+                }
             }
         } else if (connection === "open") {
             latestQR = null;
@@ -1413,6 +1492,7 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
 
             // Critical: Force an immediate sync on first successful connection to ensure SESSION_DATA is populated on Render
             await syncSessionToRender();
+            await backupFullSession();
         }
     });
 
