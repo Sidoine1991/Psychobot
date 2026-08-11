@@ -271,6 +271,22 @@ async function startBot() {
             await onceViewHandler(reaction, sock, store);
         }
     });
+
+    // Quand Sidoine lit les messages d'un chat → marquer activité propriétaire
+    // Cela évite que le bot réponde dans une conversation que Sidoine est en train de lire
+    sock.ev.on('message-receipt.update', (updates) => {
+        const aiService = require('./src/services/ai');
+        for (const update of updates) {
+            if (update.key?.fromMe) {
+                // Sidoine a lu un message dans ce chat
+                const remoteJid = update.key.remoteJid;
+                if (remoteJid) {
+                    aiService.markOwnerActivity(remoteJid);
+                    console.log(`[Bot] Lecture propriétaire détectée dans ${remoteJid} — bot en pause`);
+                }
+            }
+        }
+    });
 }
 
 // Check if we can start

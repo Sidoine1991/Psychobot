@@ -15,19 +15,76 @@ if (!NVIDIA_API_KEY) {
 const conversationMemory = new Map();
 
 // Détection propriétaire actif : dernière activité de Sidoine par JID
-const ownerActivity = new Map(); // { jid: timestamp }
-const OWNER_ACTIVE_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
+const ownerActivity = new Map(); // { jid: lastMessageTimestamp }
+const pauseExpiry = new Map();   // { jid: expiryTimestamp } — pauses manuelles via !pause
+const OWNER_ACTIVE_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 heures
+const OWNER_ACTIVITY_FILE = path.join(__dirname, '../../.owner-activity.json');
+
+function loadOwnerActivity() {
+    try {
+        if (fs.existsSync(OWNER_ACTIVITY_FILE)) {
+            const data = JSON.parse(fs.readFileSync(OWNER_ACTIVITY_FILE, 'utf8'));
+            const cutoff = Date.now() - OWNER_ACTIVE_WINDOW_MS;
+            (data.activity || []).forEach(([jid, ts]) => {
+                if (ts > cutoff) ownerActivity.set(jid, ts);
+            });
+            (data.pauses || []).forEach(([jid, expiry]) => {
+                if (expiry > Date.now()) pauseExpiry.set(jid, expiry);
+            });
+            console.log(`[AI] ✅ Owner activity chargée (${ownerActivity.size} actifs, ${pauseExpiry.size} pauses)`);
+        }
+    } catch (e) {
+        console.warn('[AI] Warning chargement owner activity:', e.message);
+    }
+}
+
+function saveOwnerActivity() {
+    try {
+        const obj = {
+            activity: Array.from(ownerActivity.entries()),
+            pauses: Array.from(pauseExpiry.entries()),
+        };
+        fs.writeFileSync(OWNER_ACTIVITY_FILE, JSON.stringify(obj), 'utf8');
+    } catch (e) {
+        console.warn('[AI] Warning sauvegarde owner activity:', e.message);
+    }
+}
 
 function markOwnerActivity(jid) {
-    if (jid) ownerActivity.set(jid, Date.now());
+    if (jid) {
+        ownerActivity.set(jid, Date.now());
+        saveOwnerActivity();
+    }
+}
+
+// Pause manuelle via !pause — stocke un timestamp d'expiration
+function markOwnerActivityFor(jid, durationMs) {
+    if (jid) {
+        pauseExpiry.set(jid, Date.now() + durationMs);
+        saveOwnerActivity();
+    }
+}
+
+function clearOwnerActivity(jid) {
+    if (jid) {
+        ownerActivity.delete(jid);
+        pauseExpiry.delete(jid);
+        saveOwnerActivity();
+    }
 }
 
 function isOwnerRecentlyActive(jid) {
     if (!jid) return false;
+    // Vérifier pause manuelle en premier
+    const expiry = pauseExpiry.get(jid);
+    if (expiry && Date.now() < expiry) return true;
+    // Vérifier activité naturelle (message envoyé)
     const lastActivity = ownerActivity.get(jid);
     if (!lastActivity) return false;
     return (Date.now() - lastActivity) < OWNER_ACTIVE_WINDOW_MS;
 }
+
+loadOwnerActivity();
 
 // Contacts déjà accueillis — persist dans un fichier JSON pour survire aux redémarrages Render
 // Durée : 24h. Passé ce délai le prochain message reçoit à nouveau l'intro.
@@ -272,5 +329,7 @@ module.exports = {
     buildSystemPrompt,
     hasRecentConversation,
     markOwnerActivity,
+    markOwnerActivityFor,
+    clearOwnerActivity,
     isOwnerRecentlyActive,
 };

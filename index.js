@@ -1249,6 +1249,7 @@ async function startBot() {
     console.log(chalk.gray(`📦 Version Baileys: ${version}`));
 
     console.log(chalk.cyan('[LOG] Creating WASocket...'));
+    
     sock = makeWASocket({
         version,
         auth: {

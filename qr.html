@@ -124,12 +124,13 @@
 
 <body>
     <div class="container">
-        <h2>Scan QR Code</h2>
-        <p style="font-size: 0.9rem; color: #ccc;">Open WhatsApp > Linked Devices > Link a Device</p>
+        <h2 id="title">Scan QR Code</h2>
+        <p id="instructions" style="font-size: 0.9rem; color: #ccc;">Open WhatsApp > Linked Devices > Link a Device</p>
 
         <div id="qr-container">
             <div class="spinner" id="spinner"></div>
             <img id="qr-image" alt="Scan QR Code" />
+            <div id="pairing-code" style="display: none; font-size: 2rem; font-weight: bold; letter-spacing: 4px; color: #4ade80;"></div>
         </div>
 
         <div class="status" id="status">Connecting to server...</div>
@@ -139,8 +140,11 @@
 
     <script>
         const qrImage = document.getElementById('qr-image');
+        const pairingCodeDiv = document.getElementById('pairing-code');
         const spinner = document.getElementById('spinner');
         const statusDiv = document.getElementById('status');
+        const titleDiv = document.getElementById('title');
+        const instructionsDiv = document.getElementById('instructions');
 
         // Connect to WebSocket using current host
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -150,12 +154,22 @@
         const ws = new WebSocket(wsUrl);
 
         ws.onopen = () => {
-            statusDiv.textContent = "Waiting for QR Code...";
+            statusDiv.textContent = "Waiting for connection...";
         };
 
         ws.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
+
+                if (data.type === 'pairing_code') {
+                    spinner.style.display = 'none';
+                    qrImage.style.display = 'none';
+                    pairingCodeDiv.style.display = 'block';
+                    pairingCodeDiv.textContent = data.code;
+                    titleDiv.textContent = "Enter Pairing Code";
+                    instructionsDiv.textContent = `Open WhatsApp > Linked Devices > Link a Device with Phone Number\nEnter this code: ${data.code}`;
+                    statusDiv.innerHTML = '<span style="color: #4ade80">Enter the code on your phone!</span>';
+                }
 
                 if (data.type === 'qr') {
                     spinner.style.display = 'none';
@@ -171,6 +185,7 @@
                 if (data.type === 'connected') {
                     spinner.style.display = 'none';
                     qrImage.style.display = 'none';
+                    pairingCodeDiv.style.display = 'none';
                     statusDiv.innerHTML = `
                         <div style="font-size: 3rem; margin-bottom:10px">✅</div>
                         <div style="color: #4ade80; font-weight: bold">Connected Successfully!</div>
