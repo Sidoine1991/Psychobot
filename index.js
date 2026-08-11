@@ -1,6 +1,6 @@
 // Psychobot - Core V2 (Clean Slate Refactor + WS Support)
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers, makeCacheableSignalKeyStore, delay } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestWaWebVersion, Browsers, makeCacheableSignalKeyStore, delay } = require('@whiskeysockets/baileys');
 const QRCode = require("qrcode");
 const pino = require("pino");
 const fs = require("fs");
@@ -365,7 +365,7 @@ app.get('/code', async (req, res) => {
         // Fetch latest WhatsApp Web version (required for pairing to work)
         let pairVersion;
         try {
-            const pairFetchResult = await fetchLatestBaileysVersion();
+            const pairFetchResult = await fetchLatestWaWebVersion();
             pairVersion = pairFetchResult.version;
         } catch (e) {
             console.log(chalk.yellow('[Pair] Version fetch timeout, using fallback'));
@@ -378,7 +378,7 @@ app.get('/code', async (req, res) => {
                 keys: makeCacheableSignalKeyStore(state.keys, pairLogger),
             },
             logger: pairLogger,
-            browser: Browsers.macOS('Desktop-2'),
+            browser: Browsers.macOS('Chrome'),
             printQRInTerminal: false,
             connectTimeoutMs: 30000,
         });
@@ -1237,7 +1237,7 @@ async function startBot() {
     try {
         const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000));
         const fetchResult = await Promise.race([
-            fetchLatestBaileysVersion(),
+            fetchLatestWaWebVersion(),
             timeoutPromise
         ]);
         version = fetchResult.version;
@@ -1257,7 +1257,7 @@ async function startBot() {
             keys: makeCacheableSignalKeyStore(state.keys, logger),
         },
         logger,
-        browser: Browsers.macOS('Desktop'),
+        browser: Browsers.macOS('Chrome'),
         printQRInTerminal: false,
         markOnlineOnConnect: true,
         generateHighQualityLinkPreview: true,
