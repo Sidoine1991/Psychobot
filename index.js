@@ -1354,13 +1354,35 @@ async function startBot() {
                 console.log(chalk.gray("  message:"), lastDisconnect?.error?.message);
                 console.log(chalk.gray("  raw:"), errorRaw);
 
-                // 401 can be a real logout OR a "device_removed" conflict from WhatsApp.
-                // On device_removed, the session is still valid — don't purge, just retry.
+                // 401 can be a real logout, a "device_removed" conflict, OR a
+                // noise-handshake failure. A "Connection Failure" at location "atn"
+                // (decodeFrame in noise-handler.js) means WhatsApp rejected the
+                // WebSocket itself — the session is still valid. Purge only on a
+                // genuine logout, otherwise we kill freshly-scanned sessions.
                 const errorStr = (lastDisconnect?.error?.message || '') + errorRaw;
                 const isDeviceRemoved = errorStr.includes('device_removed') ||
                                          errorStr.includes('conflict');
+                const isNoiseHandshakeFailure = errorStr.includes('Connection Failure') ||
+                                                 errorRaw.includes('"location":"atn"') ||
+                                                 errorRaw.includes('decodeFrame');
 
-                if (isDeviceRemoved) {
+                if (isNoiseHandshakeFailure) {
+                    console.log(chalk.yellow("⚠️ Noise handshake failure (atn / Connection Failure) — NOT a logout. Keeping session, retrying..."));
+                    if (reconnectAttempts >= 10) {
+                        console.log(chalk.red.bold("🛑 Too many handshake failures (10+). WhatsApp may be blocking this IP or the linked device."));
+                        console.log(chalk.cyan("💡 Solutions:"));
+                        console.log(chalk.cyan("   1. Ouvre WhatsApp > Appareils liés > vérifie que le bot est autorisé"));
+                        console.log(chalk.cyan("   2. Supprime TOUTES les sessions WhatsApp Web liées"));
+                        console.log(chalk.cyan("   3. Relie le bot via QR de nouveau"));
+                        console.log(chalk.cyan("   4. Render est un datacenter — WhatsApp peut bloquer les IP de cloud"));
+                        return;
+                    }
+                    isStarting = false;
+                    reconnectAttempts++;
+                    const delay = Math.min(5000 * reconnectAttempts, 60000);
+                    console.log(chalk.yellow(`🔄 Retrying in ${delay}ms... (attempt ${reconnectAttempts}/10)`));
+                    setTimeout(() => startBot(), delay);
+                } else if (isDeviceRemoved) {
                     console.log(chalk.yellow("⚠️ device_removed conflict — NOT purging session."));
                     if (reconnectAttempts >= 10) {
                         console.log(chalk.red.bold("🛑 Too many device_removed retries (10+). WhatsApp is actively rejecting this device."));
