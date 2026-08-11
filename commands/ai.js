@@ -1,18 +1,39 @@
 const axios = require('axios');
 require('dotenv').config();
 
-const NVIDIA_NIM_API_KEY = process.env.NVIDIA_NIM_API_KEY || "";
-const NVIDIA_NIM_BASE = "https://integrate.api.nvidia.com/v1";
-const NVIDIA_NIM_MODEL = process.env.NVIDIA_NIM_MODEL || "meta/llama-3.3-70b-instruct";
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "";
-const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
-const OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct:free";
+// Providers disponibles — utilisés dans l'ordre, le premier avec une clé valide répond
+const PROVIDERS = [
+    {
+        name: 'Groq',
+        baseUrl: 'https://api.groq.com/openai/v1',
+        apiKey: process.env.GROQ_API_KEY,
+        model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+    },
+    {
+        name: 'OpenAI',
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: process.env.OPENAI_API_KEY,
+        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+    },
+    {
+        name: 'NVIDIA NIM',
+        baseUrl: 'https://integrate.api.nvidia.com/v1',
+        apiKey: process.env.NVIDIA_NIM_API_KEY,
+        model: process.env.NVIDIA_NIM_MODEL || 'meta/llama-3.3-70b-instruct',
+    },
+    {
+        name: 'OpenRouter',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        apiKey: process.env.OPENROUTER_API_KEY,
+        model: 'meta-llama/llama-3.3-70b-instruct:free',
+    },
+].filter(p => p.apiKey);
 
-async function callLLM(baseUrl, apiKey, model, messages) {
-    const resp = await axios.post(`${baseUrl}/chat/completions`, {
-        model, messages, temperature: 0.7, max_tokens: 1024, stream: false
+async function callLLM(provider, messages) {
+    const resp = await axios.post(`${provider.baseUrl}/chat/completions`, {
+        model: provider.model, messages, temperature: 0.7, max_tokens: 1024, stream: false
     }, {
-        headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        headers: { "Authorization": `Bearer ${provider.apiKey}`, "Content-Type": "application/json" },
         timeout: 45000
     });
     return resp.data.choices[0].message.content.trim();
@@ -24,12 +45,20 @@ async function getAIResponse(prompt) {
         { role: "system", content: "You are a helpful assistant." },
         { role: "user", content: prompt }
     ];
-    try {
-        return await callLLM(NVIDIA_NIM_BASE, NVIDIA_NIM_API_KEY, NVIDIA_NIM_MODEL, messages);
-    } catch (e) {
-        try { return await callLLM(OPENROUTER_BASE, OPENROUTER_API_KEY, OPENROUTER_MODEL, messages); }
-        catch (e2) { return "Desole, l'IA est temporairement indisponible."; }
+    if (PROVIDERS.length === 0) {
+        console.error('[AI] Aucune clé API configurée (GROQ_API_KEY, OPENAI_API_KEY, NVIDIA_NIM_API_KEY ou OPENROUTER_API_KEY).');
+        return "Desole, l'IA est temporairement indisponible.";
     }
+    for (const provider of PROVIDERS) {
+        try {
+            const reply = await callLLM(provider, messages);
+            console.log(`[AI] ✅ Réponse via ${provider.name} (${provider.model})`);
+            return reply;
+        } catch (e) {
+            console.error(`[AI ${provider.name}] Erreur: ${e.response?.status || e.code || ''} ${e.message}`);
+        }
+    }
+    return "Desole, l'IA est temporairement indisponible.";
 }
 
 module.exports = {

@@ -2,13 +2,37 @@ const fetch = require('node-fetch');
 const fs = require('fs');
 const path = require('path');
 
-const NVIDIA_API_KEY = process.env.NVIDIA_NIM_API_KEY;
-const NVIDIA_API_URL = 'https://integrate.api.nvidia.com/v1';
-const MODEL = process.env.NVIDIA_NIM_MODEL || 'meta/llama-3.3-70b-instruct';
+// Providers IA — utilisés dans l'ordre, le premier avec une clé valide répond
+const PROVIDERS = [
+    {
+        name: 'Groq',
+        baseUrl: 'https://api.groq.com/openai/v1',
+        apiKey: process.env.GROQ_API_KEY,
+        model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+    },
+    {
+        name: 'OpenAI',
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: process.env.OPENAI_API_KEY,
+        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+    },
+    {
+        name: 'NVIDIA NIM',
+        baseUrl: 'https://integrate.api.nvidia.com/v1',
+        apiKey: process.env.NVIDIA_NIM_API_KEY,
+        model: process.env.NVIDIA_NIM_MODEL || 'meta/llama-3.3-70b-instruct',
+    },
+    {
+        name: 'OpenRouter',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        apiKey: process.env.OPENROUTER_API_KEY,
+        model: 'meta-llama/llama-3.3-70b-instruct:free',
+    },
+].filter(p => p.apiKey);
 
-if (!NVIDIA_API_KEY) {
-    console.error('[AI Service] ❌ NVIDIA_NIM_API_KEY non configurée — l\'assistant ne pourra pas fonctionner.');
-    console.error('[AI Service] Configurez-la dans Render Dashboard → Environment → NVIDIA_NIM_API_KEY');
+if (PROVIDERS.length === 0) {
+    console.error('[AI Service] ❌ Aucune clé API configurée (GROQ_API_KEY, OPENAI_API_KEY, NVIDIA_NIM_API_KEY ou OPENROUTER_API_KEY).');
+    console.error('[AI Service] Configurez-la dans Render Dashboard → Environment.');
 }
 
 // Mémoire de conversation par JID (clé = remoteJid)
@@ -222,30 +246,41 @@ ${SIDOINE_PROFILE}`;
 
 // ── LLM caller ────────────────────────────────────────────────────────────────
 
-async function callNVIDIA(messages) {
-    const response = await fetch(`${NVIDIA_API_URL}/chat/completions`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${NVIDIA_API_KEY}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            model: MODEL,
-            messages,
-            temperature: 0.72,
-            top_p: 0.9,
-            max_tokens: 512
-        }),
-        timeout: 20000
-    });
+async function callProvider(messages) {
+    if (PROVIDERS.length === 0) throw new Error('Aucune clé API configurée');
+    let lastError;
+    for (const provider of PROVIDERS) {
+        try {
+            const response = await fetch(`${provider.baseUrl}/chat/completions`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${provider.apiKey}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    model: provider.model,
+                    messages,
+                    temperature: 0.72,
+                    top_p: 0.9,
+                    max_tokens: 512
+                }),
+                timeout: 20000
+            });
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`NVIDIA API ${response.status}: ${errorText.substring(0, 120)}`);
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`${provider.name} API ${response.status}: ${errorText.substring(0, 120)}`);
+            }
+
+            const data = await response.json();
+            console.log(`[AI Service] ✅ Réponse via ${provider.name} (${provider.model})`);
+            return data.choices[0].message.content.trim();
+        } catch (error) {
+            lastError = error;
+            console.error(`[AI Service] ${provider.name} échec:`, error.message);
+        }
     }
-
-    const data = await response.json();
-    return data.choices[0].message.content.trim();
+    throw lastError || new Error('Tous les providers IA ont échoué');
 }
 
 // ── Main entry point ──────────────────────────────────────────────────────────
@@ -280,7 +315,7 @@ async function getAIResponse(prompt, contactName = null, conversationHistory = [
 
         messages.push({ role: 'user', content: prompt });
 
-        const aiReply = await callNVIDIA(messages);
+        const aiReply = await callProvider(messages);
 
         // Marquer ce contact comme "déjà accueilli" après la première réponse réussie
         if (firstContact && memKey) markContacted(memKey);
