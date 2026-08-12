@@ -1384,12 +1384,24 @@ async function startBot() {
                 if (isNoiseHandshakeFailure) {
                     console.log(chalk.yellow("⚠️ Noise handshake failure (atn / Connection Failure) — NOT a logout. Keeping session, retrying..."));
                     if (reconnectAttempts >= 10) {
-                        console.log(chalk.red.bold("🛑 Too many handshake failures (10+). WhatsApp may be blocking this IP or the linked device."));
-                        console.log(chalk.cyan("💡 Solutions:"));
-                        console.log(chalk.cyan("   1. Ouvre WhatsApp > Appareils liés > vérifie que le bot est autorisé"));
-                        console.log(chalk.cyan("   2. Supprime TOUTES les sessions WhatsApp Web liées"));
-                        console.log(chalk.cyan("   3. Relie le bot via QR de nouveau"));
-                        console.log(chalk.cyan("   4. Render est un datacenter — WhatsApp peut bloquer les IP de cloud"));
+                        console.log(chalk.red.bold("🛑 Too many handshake failures (10+). Purging session for a fresh QR..."));
+                        console.log(chalk.cyan("💡 WhatsApp peut bloquer le compte, les appareils liés ou l'IP du datacenter."));
+                        console.log(chalk.cyan("   1. Ouvre WhatsApp > Appareils liés > supprime TOUTES les sessions liées"));
+                        console.log(chalk.cyan("   2. Vérifie que WhatsApp Web fonctionne dans un navigateur pour ce numéro"));
+                        console.log(chalk.cyan("   3. Scanne le nouveau QR ci-dessous rapidement"));
+                        try {
+                            fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
+                            if (!fs.existsSync(AUTH_FOLDER)) fs.mkdirSync(AUTH_FOLDER, { recursive: true });
+                            fs.writeFileSync(path.join(AUTH_FOLDER, '.skip-session-data'), 'true');
+                            console.log(chalk.green("✅ Session purgée — nouveau QR en préparation."));
+                        } catch (e) {
+                            console.error(chalk.red("❌ Failed to purge session:"), e.message);
+                        }
+                        broadcast({ type: 'status', message: 'Session invalide — scanne le nouveau QR rapidement.' });
+                        reconnectAttempts = 0;
+                        isStarting = false;
+                        isConnected = false;
+                        setTimeout(() => startBot(), 3000);
                         return;
                     }
                     isStarting = false;
