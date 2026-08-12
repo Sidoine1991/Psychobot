@@ -379,7 +379,7 @@ app.get('/code', async (req, res) => {
                 keys: makeCacheableSignalKeyStore(state.keys, pairLogger),
             },
             logger: pairLogger,
-            browser: Browsers.macOS('Chrome'),
+            browser: Browsers.windows('Chrome'),
             printQRInTerminal: false,
             connectTimeoutMs: 30000,
         });
@@ -1271,7 +1271,7 @@ async function startBot() {
             keys: makeCacheableSignalKeyStore(state.keys, logger),
         },
         logger,
-        browser: Browsers.macOS('Chrome'),
+        browser: Browsers.windows('Chrome'),
         printQRInTerminal: false,
         markOnlineOnConnect: true,
         generateHighQualityLinkPreview: true,
