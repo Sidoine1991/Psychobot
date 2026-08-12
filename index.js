@@ -13,6 +13,7 @@ const http = require('http');
 const bodyParser = require("body-parser");
 const os = require('os');
 const axios = require('axios');
+const { HttpsProxyAgent } = require('https-proxy-agent');
 const cron = require('node-cron');
 const googleTTS = require('google-tts-api');
 require('dotenv').config();
@@ -372,6 +373,7 @@ app.get('/code', async (req, res) => {
             console.log(chalk.yellow('[Pair] Version fetch timeout, using fallback'));
             pairVersion = [2, 3000, 1045017392];
         }
+        const pairProxyAgent = process.env.PROXY_URL ? new HttpsProxyAgent(process.env.PROXY_URL) : undefined;
         const pairSock = makeWASocket({
             version: pairVersion,
             auth: {
@@ -382,6 +384,7 @@ app.get('/code', async (req, res) => {
             browser: Browsers.windows('Chrome'),
             printQRInTerminal: false,
             connectTimeoutMs: 30000,
+            agent: pairProxyAgent,
         });
 
         pairSock.ev.on('creds.update', saveCreds);
@@ -1269,6 +1272,11 @@ async function startBot() {
 
     console.log(chalk.gray(`📦 Version Baileys: ${version}`));
 
+    const proxyAgent = process.env.PROXY_URL ? new HttpsProxyAgent(process.env.PROXY_URL) : undefined;
+    if (proxyAgent) {
+        console.log(chalk.cyan(`🌍 Proxy activé: ${process.env.PROXY_URL}`));
+    }
+
     console.log(chalk.cyan('[LOG] Creating WASocket...'));
     
     sock = makeWASocket({
@@ -1289,7 +1297,8 @@ async function startBot() {
         maxMsgRetryCount: 5,
         syncFullHistory: false,
         shouldSyncHistoryMessage: () => false,
-        shouldIgnoreJid: (jid) => jid?.includes('@newsletter') || jid === 'status@broadcast'
+        shouldIgnoreJid: (jid) => jid?.includes('@newsletter') || jid === 'status@broadcast',
+        agent: proxyAgent,
     });
     console.log(chalk.cyan('[LOG] WASocket created'));
 

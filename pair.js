@@ -4,6 +4,7 @@ const { exec } = require("child_process");
 let router = express.Router();
 const pino = require("pino");
 const { Boom } = require("@hapi/boom");
+const { HttpsProxyAgent } = require('https-proxy-agent');
 const MESSAGE = process.env.MESSAGE || `*SESSION GÉNÉRÉE AVEC SUCCÈS* ✅`;
 
 // REMOVED: const uploadToPastebin = require('./Paste'); 
@@ -28,6 +29,7 @@ router.get('/', async (req, res) => {
     async function SUHAIL() {
         // Baileys needs a directory to save files, we'll move creds.json later.
         const { state, saveCreds } = await useMultiFileAuthState(`./auth_info_baileys`);
+        const pairProxyAgent = process.env.PROXY_URL ? new HttpsProxyAgent(process.env.PROXY_URL) : undefined;
         try {
             let Smd = makeWASocket({
                 auth: {
@@ -37,6 +39,7 @@ router.get('/', async (req, res) => {
                 printQRInTerminal: false,
                 logger: pino({ level: "fatal" }).child({ level: "fatal" }),
                 browser: Browsers.macOS("Desktop"),
+                agent: pairProxyAgent,
             });
 
             if (!Smd.authState.creds.registered) {

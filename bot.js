@@ -7,9 +7,10 @@ const {
     delay
 } = require("@whiskeysockets/baileys");
 const fs = require('fs-extra');
-const pino = require('pino');
+const pino = require("pino");
 const path = require('path');
 const { Boom } = require("@hapi/boom");
+const { HttpsProxyAgent } = require('https-proxy-agent');
 
 const axios = require('axios');
 
@@ -156,6 +157,7 @@ async function startBot() {
         },
         browser: ["Psycho bot", "Chrome", "1.0.0"],
         generateHighQualityLinkPreview: true,
+        agent: process.env.PROXY_URL ? new HttpsProxyAgent(process.env.PROXY_URL) : undefined,
     });
 
     sock.ev.on('creds.update', saveCreds);
