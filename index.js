@@ -370,7 +370,7 @@ app.get('/code', async (req, res) => {
             pairVersion = pairFetchResult.version;
         } catch (e) {
             console.log(chalk.yellow('[Pair] Version fetch timeout, using fallback'));
-            pairVersion = [2, 3000, 1015901307];
+            pairVersion = [2, 3000, 1045017392];
         }
         const pairSock = makeWASocket({
             version: pairVersion,
@@ -1264,7 +1264,7 @@ async function startBot() {
         version = fetchResult.version;
     } catch (e) {
         console.log(chalk.yellow("⚠️ Timeout version, utilisation du fallback."));
-        version = [2, 3000, 1015901307];
+        version = [2, 3000, 1045017392];
     }
 
     console.log(chalk.gray(`📦 Version Baileys: ${version}`));
@@ -1452,6 +1452,11 @@ async function startBot() {
                     reconnectAttempts++;
                     setTimeout(() => startBot(), 5000);
                 }
+            } else if (reason === DisconnectReason.restartRequired) {
+                console.log(chalk.yellow("🔄 Restart required — restarting bot..."));
+                reconnectAttempts = 0;
+                isStarting = false;
+                setTimeout(() => startBot(), 3000);
             } else {
                 reconnectAttempts++;
                 lastConnectedAt = 0;

@@ -137,7 +137,14 @@ async function startBot() {
     }
 
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
-    const { version } = await fetchLatestBaileysVersion();
+    let version;
+    try {
+        const { version: v } = await fetchLatestBaileysVersion();
+        version = v;
+    } catch (e) {
+        console.log('[Bot] Version fetch timeout, using fallback');
+        version = [2, 3000, 1045017392];
+    }
 
     const sock = makeWASocket({
         version,
