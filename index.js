@@ -211,6 +211,7 @@ async function restoreFullSession() {
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 10; // Limite max pour éviter les boucles infinies
 let isStarting = false;
+let isConnected = false;
 let latestQR = null;
 let lastConnectedAt = 0;
 let sock = null;
@@ -479,6 +480,14 @@ app.get('/new-qr', (req, res) => {
             console.log(chalk.green('[NewQR] Session + backups cleared'));
         } catch (e) {
             console.error('[NewQR] Failed to clear session:', e.message);
+        }
+
+        // Set flag to skip SESSION_DATA on next boot (otherwise the old broken session is restored)
+        try {
+            fs.writeFileSync(path.join(__dirname, '.skip-session-data'), 'true');
+            console.log(chalk.green('[NewQR] Skip SESSION_DATA flag set — forcing fresh QR'));
+        } catch (e) {
+            console.error('[NewQR] Failed to set skip flag:', e.message);
         }
 
         res.json({
@@ -1117,10 +1126,10 @@ wss.on('connection', (ws) => {
         QRCode.toDataURL(latestQR).then(url => {
             ws.send(JSON.stringify({ type: 'qr', qr: url }));
         });
-    } else if (sock?.user) {
+    } else if (isConnected && sock?.user) {
         ws.send(JSON.stringify({ type: 'connected', user: sock.user.id.split(':')[0] }));
     } else {
-        ws.send(JSON.stringify({ type: 'status', message: 'Initializing...' }));
+        ws.send(JSON.stringify({ type: 'disconnected', message: 'Bot not connected. Generate a new QR code below.' }));
     }
 });
 
@@ -1128,6 +1137,7 @@ wss.on('connection', (ws) => {
 async function startBot() {
     if (isStarting) return;
     isStarting = true;
+    isConnected = false;
 
     console.log(chalk.cyan('=== STARTBOT CALLED [v2] ==='));
 
@@ -1342,6 +1352,7 @@ async function startBot() {
 
             broadcast({ type: 'status', message: `Disconnected: ${reason || 'Error'}` });
             isStarting = false;
+            isConnected = false;
             const errorRaw = JSON.stringify(lastDisconnect?.error || {});
 
             if (reason === DisconnectReason.connectionReplaced || reason === 440 || reason === 405) {
@@ -1436,6 +1447,7 @@ async function startBot() {
             reconnectAttempts = 0;
             criticalErrorCount = 0; // Reset error counter on success
             isStarting = false;
+            isConnected = true;
             lastConnectedAt = Date.now();
             console.log(chalk.green.bold("\n✅ PSYCHOBOT ONLINE AND CONNECTED !"));
 

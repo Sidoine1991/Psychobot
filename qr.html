@@ -119,6 +119,31 @@
         .btn-home:hover {
             color: var(--text);
         }
+
+        .btn-new-qr {
+            width: 100%;
+            padding: 13px;
+            background: linear-gradient(45deg, var(--primary), var(--secondary));
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.3s ease, filter 0.3s ease;
+            box-shadow: 0 4px 15px rgba(88, 101, 242, 0.3);
+            font-family: inherit;
+        }
+
+        .btn-new-qr:hover {
+            filter: brightness(1.1);
+            transform: translateY(-1px);
+        }
+
+        .btn-new-qr:disabled {
+            filter: grayscale(1);
+            cursor: not-allowed;
+        }
     </style>
 </head>
 
@@ -135,6 +160,8 @@
 
         <div class="status" id="status">Connecting to server...</div>
 
+        <button id="newQrBtn" class="btn-new-qr" style="display: none; margin-top: 15px;">🔄 Generate New QR Code</button>
+
         <a href="/" class="btn-home">← Back to Home</a>
     </div>
 
@@ -145,6 +172,29 @@
         const statusDiv = document.getElementById('status');
         const titleDiv = document.getElementById('title');
         const instructionsDiv = document.getElementById('instructions');
+        const newQrBtn = document.getElementById('newQrBtn');
+
+        newQrBtn.addEventListener('click', async () => {
+            newQrBtn.disabled = true;
+            newQrBtn.textContent = 'Clearing session...';
+            statusDiv.textContent = 'Clearing old session, new QR in a few seconds...';
+            try {
+                const resp = await fetch('/new-qr');
+                const data = await resp.json();
+                if (data.success) {
+                    setTimeout(() => window.location.reload(), 3500);
+                } else {
+                    alert('Failed: ' + (data.error || 'unknown error'));
+                    newQrBtn.disabled = false;
+                    newQrBtn.textContent = '🔄 Generate New QR Code';
+                }
+            } catch (err) {
+                console.error(err);
+                alert('An error occurred. Check server logs.');
+                newQrBtn.disabled = false;
+                newQrBtn.textContent = '🔄 Generate New QR Code';
+            }
+        });
 
         // Connect to WebSocket using current host
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -182,10 +232,21 @@
                     statusDiv.textContent = data.message;
                 }
 
+                if (data.type === 'disconnected') {
+                    spinner.style.display = 'none';
+                    qrImage.style.display = 'none';
+                    pairingCodeDiv.style.display = 'none';
+                    statusDiv.style.color = '#ef4444';
+                    statusDiv.textContent = data.message || 'Bot not connected.';
+                    newQrBtn.style.display = 'inline-block';
+                }
+
                 if (data.type === 'connected') {
                     spinner.style.display = 'none';
                     qrImage.style.display = 'none';
                     pairingCodeDiv.style.display = 'none';
+                    newQrBtn.style.display = 'none';
+                    statusDiv.style.color = '';
                     statusDiv.innerHTML = `
                         <div style="font-size: 3rem; margin-bottom:10px">✅</div>
                         <div style="color: #4ade80; font-weight: bold">Connected Successfully!</div>
@@ -195,7 +256,18 @@
                     setTimeout(() => window.location.href = '/', 3000);
                 }
 
+                if (data.type === 'qr') {
+                    spinner.style.display = 'none';
+                    qrImage.style.display = 'block';
+                    newQrBtn.style.display = 'none';
+                    statusDiv.style.color = '';
+                    qrImage.src = data.qr;
+                    statusDiv.innerHTML = '<span style="color: #4ade80">Scan this code now!</span>';
+                }
+
                 if (data.type === 'error') {
+                    spinner.style.display = 'none';
+                    newQrBtn.style.display = 'inline-block';
                     statusDiv.style.color = '#ef4444';
                     statusDiv.textContent = "Error: " + data.message;
                 }
