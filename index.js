@@ -1295,6 +1295,14 @@ async function startBot() {
 
     sock.ev.on("creds.update", async () => {
         await saveCreds();
+        // Delete skip flag as soon as fresh creds are saved — prevents clearing on reconnect
+        try {
+            const skipFlag = path.join(AUTH_FOLDER, '.skip-session-data');
+            if (fs.existsSync(skipFlag)) {
+                fs.unlinkSync(skipFlag);
+                console.log(chalk.green('🗑️ skip-session-data flag cleared (creds updated).'));
+            }
+        } catch (e) {}
         try {
             // Backup complet: creds.json + toutes les clés (pre-keys, sessions, etc.)
             await backupFullSession();
