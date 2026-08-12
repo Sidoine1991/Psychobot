@@ -1158,6 +1158,12 @@ async function startBot() {
         try {
             fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
             fs.writeFileSync(skipSessionDataFlag, 'true'); // re-create flag on persistent disk
+            // Also clear backups to prevent stale session restoration
+            const backupPaths = ['session_backup.txt', 'session_full_backup.txt'];
+            for (const bp of backupPaths) {
+                const p = path.join(__dirname, bp);
+                if (fs.existsSync(p)) fs.unlinkSync(p);
+            }
         } catch (e) {
             console.error('Failed to clear AUTH_FOLDER:', e.message);
         }
@@ -1211,7 +1217,7 @@ async function startBot() {
     }
 
     // Priorité 2 : backup local session_backup.txt (si creds.json absent)
-    if (!fs.existsSync(credsPath) && fs.existsSync(backupPath)) {
+    if (!skipSessionData && !fs.existsSync(credsPath) && fs.existsSync(backupPath)) {
         console.log(chalk.blue("🔹 Backup local détecté. Restauration session..."));
         try {
             const sessionBuffer = Buffer.from(fs.readFileSync(backupPath, 'utf-8').trim(), 'base64').toString('utf-8');
@@ -1233,7 +1239,7 @@ async function startBot() {
     // the valid session. Users can manually purge via /logout or /new-qr.
 
     // Priorité 3 : backup complet (creds + pre-keys + sessions)
-    if (!skipSessionData && !fs.existsSync(credsPath)) {
+    if (!skipSessionData && !process.env.SKIP_SESSION_DATA && !fs.existsSync(credsPath)) {
         const restored = await restoreFullSession();
         if (restored) {
             console.log(chalk.green("✅ Session complète restaurée depuis session_full_backup.txt."));
@@ -1382,33 +1388,26 @@ async function startBot() {
                                                  errorRaw.includes('decodeFrame');
 
                 if (isNoiseHandshakeFailure) {
-                    console.log(chalk.yellow("⚠️ Noise handshake failure (atn / Connection Failure) — NOT a logout. Keeping session, retrying..."));
-                    if (reconnectAttempts >= 10) {
-                        console.log(chalk.red.bold("🛑 Too many handshake failures (10+). Purging session for a fresh QR..."));
-                        console.log(chalk.cyan("💡 WhatsApp peut bloquer le compte, les appareils liés ou l'IP du datacenter."));
-                        console.log(chalk.cyan("   1. Ouvre WhatsApp > Appareils liés > supprime TOUTES les sessions liées"));
-                        console.log(chalk.cyan("   2. Vérifie que WhatsApp Web fonctionne dans un navigateur pour ce numéro"));
-                        console.log(chalk.cyan("   3. Scanne le nouveau QR ci-dessous rapidement"));
-                        try {
-                            fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
-                            if (!fs.existsSync(AUTH_FOLDER)) fs.mkdirSync(AUTH_FOLDER, { recursive: true });
-                            fs.writeFileSync(path.join(AUTH_FOLDER, '.skip-session-data'), 'true');
-                            console.log(chalk.green("✅ Session purgée — nouveau QR en préparation."));
-                        } catch (e) {
-                            console.error(chalk.red("❌ Failed to purge session:"), e.message);
+                    console.log(chalk.yellow("⚠️ Noise handshake failure — clearing session for fresh QR..."));
+                    // ALWAYS purge on handshake failure: keep stale creds → infinite 401 loop
+                    try {
+                        fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
+                        if (!fs.existsSync(AUTH_FOLDER)) fs.mkdirSync(AUTH_FOLDER, { recursive: true });
+                        fs.writeFileSync(path.join(AUTH_FOLDER, '.skip-session-data'), 'true');
+                        const backupPaths = ['session_backup.txt', 'session_full_backup.txt'];
+                        for (const bp of backupPaths) {
+                            const p = path.join(__dirname, bp);
+                            if (fs.existsSync(p)) fs.unlinkSync(p);
                         }
-                        broadcast({ type: 'status', message: 'Session invalide — scanne le nouveau QR rapidement.' });
-                        reconnectAttempts = 0;
-                        isStarting = false;
-                        isConnected = false;
-                        setTimeout(() => startBot(), 3000);
-                        return;
+                        console.log(chalk.green("✅ Session purged — fresh QR will be generated."));
+                    } catch (e) {
+                        console.error(chalk.red("❌ Failed to purge session:"), e.message);
                     }
+                    broadcast({ type: 'status', message: 'Session rejetée — nouveau QR généré. Scanne-le vite.' });
+                    reconnectAttempts = 0;
                     isStarting = false;
-                    reconnectAttempts++;
-                    const delay = Math.min(5000 * reconnectAttempts, 60000);
-                    console.log(chalk.yellow(`🔄 Retrying in ${delay}ms... (attempt ${reconnectAttempts}/10)`));
-                    setTimeout(() => startBot(), delay);
+                    isConnected = false;
+                    setTimeout(() => startBot(), 3000);
                 } else if (isDeviceRemoved) {
                     console.log(chalk.yellow("⚠️ device_removed conflict — NOT purging session."));
                     if (reconnectAttempts >= 10) {
