@@ -1418,22 +1418,25 @@ async function startBot() {
                     isConnected = false;
                     setTimeout(() => startBot(), 3000);
                 } else if (isDeviceRemoved) {
-                    console.log(chalk.yellow("⚠️ device_removed conflict — NOT purging session."));
-                    if (reconnectAttempts >= 10) {
-                        console.log(chalk.red.bold("🛑 Too many device_removed retries (10+). WhatsApp is actively rejecting this device."));
-                        console.log(chalk.cyan("💡 Solutions:"));
-                        console.log(chalk.cyan("   1. Ouvre WhatsApp > Appareils liés > vérifie que le bot est autorisé"));
-                        console.log(chalk.cyan("   2. Supprime TOUTES les sessions WhatsApp Web liées"));
-                        console.log(chalk.cyan("   3. Relie le bot via QR de nouveau"));
-                        console.log(chalk.cyan("   4. Render est un datacenter — WhatsApp peut bloquer les IP de cloud"));
-                        // Don't purge, but stop retrying to avoid infinite loop
-                        return;
+                    console.log(chalk.red("⚠️ device_removed conflict — session is dead. Purging for fresh QR..."));
+                    try {
+                        fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
+                        if (!fs.existsSync(AUTH_FOLDER)) fs.mkdirSync(AUTH_FOLDER, { recursive: true });
+                        fs.writeFileSync(path.join(AUTH_FOLDER, '.skip-session-data'), 'true');
+                        const backupPaths = ['session_backup.txt', 'session_full_backup.txt'];
+                        for (const bp of backupPaths) {
+                            const p = path.join(__dirname, bp);
+                            if (fs.existsSync(p)) fs.unlinkSync(p);
+                        }
+                        console.log(chalk.green("✅ Session purged due to device_removed. Fresh QR on restart."));
+                    } catch (e) {
+                        console.error(chalk.red("❌ Failed to purge session:"), e.message);
                     }
+                    broadcast({ type: 'status', message: 'Device removed — nouveau QR requis.' });
+                    reconnectAttempts = 0;
                     isStarting = false;
-                    reconnectAttempts++;
-                    const delay = Math.min(5000 * reconnectAttempts, 60000);
-                    console.log(chalk.yellow(`🔄 Retrying in ${delay}ms... (attempt ${reconnectAttempts}/10)`));
-                    setTimeout(() => startBot(), delay);
+                    isConnected = false;
+                    setTimeout(() => startBot(), 3000);
                 } else {
                     console.log(chalk.red("🛑 Genuine logout (401). Clearing session."));
                     try {
