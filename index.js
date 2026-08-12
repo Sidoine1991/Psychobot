@@ -483,8 +483,10 @@ app.get('/new-qr', (req, res) => {
         }
 
         // Set flag to skip SESSION_DATA on next boot (otherwise the old broken session is restored)
+        // Flag lives inside AUTH_FOLDER (persistent disk mount on Render) so it survives instance restarts
         try {
-            fs.writeFileSync(path.join(__dirname, '.skip-session-data'), 'true');
+            if (!fs.existsSync(AUTH_FOLDER)) fs.mkdirSync(AUTH_FOLDER, { recursive: true });
+            fs.writeFileSync(path.join(AUTH_FOLDER, '.skip-session-data'), 'true');
             console.log(chalk.green('[NewQR] Skip SESSION_DATA flag set — forcing fresh QR'));
         } catch (e) {
             console.error('[NewQR] Failed to set skip flag:', e.message);
@@ -835,7 +837,8 @@ app.get('/logout', (req, res) => {
         }
 
         // Set flag to skip SESSION_DATA on next boot
-        fs.writeFileSync(path.join(__dirname, '.skip-session-data'), 'true');
+        if (!fs.existsSync(AUTH_FOLDER)) fs.mkdirSync(AUTH_FOLDER, { recursive: true });
+        fs.writeFileSync(path.join(AUTH_FOLDER, '.skip-session-data'), 'true');
 
         res.json({
             success: true,
@@ -1142,18 +1145,19 @@ async function startBot() {
     console.log(chalk.cyan('=== STARTBOT CALLED [v2] ==='));
 
     // Check if we should skip SESSION_DATA (flag set after 401 error)
-    const skipSessionDataFlag = path.join(__dirname, '.skip-session-data');
+    const skipSessionDataFlag = path.join(AUTH_FOLDER, '.skip-session-data');
     let skipSessionData = false;
     if (fs.existsSync(skipSessionDataFlag)) {
         skipSessionData = true;
         console.log(chalk.yellow('⚠️ SKIP_SESSION_DATA flag detected. Forcing fresh QR.'));
-        fs.unlinkSync(skipSessionDataFlag);
+        // Flag is kept until a successful connection (deleted in 'open' handler)
     }
 
     // If flag was set, also clear AUTH_FOLDER to be safe
     if (skipSessionData && fs.existsSync(AUTH_FOLDER)) {
         try {
             fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
+            fs.writeFileSync(skipSessionDataFlag, 'true'); // re-create flag on persistent disk
         } catch (e) {
             console.error('Failed to clear AUTH_FOLDER:', e.message);
         }
@@ -1194,7 +1198,7 @@ async function startBot() {
 
     // Priorité 1 : SESSION_DATA env var (configuré manuellement sur Render)
     // BUT: Skip if SKIP_SESSION_DATA is set (happens after 401 error to force fresh QR)
-    if (process.env.SESSION_DATA && !fs.existsSync(credsPath) && !process.env.SKIP_SESSION_DATA) {
+    if (process.env.SESSION_DATA && !fs.existsSync(credsPath) && !skipSessionData && !process.env.SKIP_SESSION_DATA) {
         console.log(chalk.blue("🔹 SESSION_DATA détectée. Restauration de la session..."));
         try {
             const sessionBuffer = Buffer.from(process.env.SESSION_DATA, 'base64').toString('utf-8');
@@ -1419,7 +1423,7 @@ async function startBot() {
                             fs.unlinkSync(backupPath);
                             console.log(chalk.yellow("🗑️ session_backup.txt deleted."));
                         }
-                        fs.writeFileSync(path.join(__dirname, '.skip-session-data'), 'true');
+                        fs.writeFileSync(path.join(AUTH_FOLDER, '.skip-session-data'), 'true');
                         console.log(chalk.green("✅ Session cleared. Skipping SESSION_DATA on next boot."));
                     } catch (e) {
                         console.error(chalk.red("❌ Failed to clear session:"), e.message);
@@ -1450,6 +1454,13 @@ async function startBot() {
             isConnected = true;
             lastConnectedAt = Date.now();
             console.log(chalk.green.bold("\n✅ PSYCHOBOT ONLINE AND CONNECTED !"));
+
+            // Clear skip flag now that we have a working session (so SESSION_DATA/disk session is used next boot)
+            const skipFlagPath = path.join(AUTH_FOLDER, '.skip-session-data');
+            if (fs.existsSync(skipFlagPath)) {
+                fs.unlinkSync(skipFlagPath);
+                console.log(chalk.green('🗑️ skip-session-data flag cleared (session valid).'));
+            }
 
             const user = sock.user.id.split(':')[0];
             broadcast({ type: 'connected', user });
