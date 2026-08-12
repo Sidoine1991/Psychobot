@@ -1157,6 +1157,7 @@ async function startBot() {
     if (skipSessionData && fs.existsSync(AUTH_FOLDER)) {
         try {
             fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
+            if (!fs.existsSync(AUTH_FOLDER)) fs.mkdirSync(AUTH_FOLDER, { recursive: true });
             fs.writeFileSync(skipSessionDataFlag, 'true'); // re-create flag on persistent disk
             // Also clear backups to prevent stale session restoration
             const backupPaths = ['session_backup.txt', 'session_full_backup.txt'];
