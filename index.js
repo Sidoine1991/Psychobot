@@ -120,7 +120,7 @@ const botStartTime = Math.floor(Date.now() / 1000);
 async function notifyOwner(text) {
     try {
         const ownerJid = OWNER_PN + "@s.whatsapp.net";
-        if (sock?.user) {
+        if (sock?.user && isConnected) {
             await sock.sendMessage(ownerJid, { text: `🛡️ *LOGS SYSTÈME PSYCHO-BOT*\n━━━━━━━━━━━━━━\n${text}` });
         }
     } catch (e) {
@@ -1378,46 +1378,21 @@ async function startBot() {
                 console.log(chalk.red("⚠️ Session Conflict. Restarting..."));
                 sock.end();
                 process.exit(1);
-            } else if (reason === DisconnectReason.loggedOut || reason === 401) {
-                // Log full error for debugging
-                console.log(chalk.red("🛑 401 received. Error details:"));
-                console.log(chalk.gray("  message:"), lastDisconnect?.error?.message);
-                console.log(chalk.gray("  raw:"), errorRaw);
-
-                // 401 can be a real logout, a "device_removed" conflict, OR a
-                // noise-handshake failure. A "Connection Failure" at location "atn"
-                // (decodeFrame in noise-handler.js) means WhatsApp rejected the
-                // WebSocket itself — the session is still valid. Purge only on a
-                // genuine logout, otherwise we kill freshly-scanned sessions.
+            } else if (reason === DisconnectReason.restartRequired) {
+                console.log(chalk.yellow("🔄 Restart required — restarting bot..."));
+                reconnectAttempts = 0;
+                isStarting = false;
+                setTimeout(() => startBot(), 3000);
+            } else {
+                const errorRaw = JSON.stringify(lastDisconnect?.error || {});
                 const errorStr = (lastDisconnect?.error?.message || '') + errorRaw;
                 const isDeviceRemoved = errorStr.includes('device_removed') ||
                                          errorStr.includes('conflict');
                 const isNoiseHandshakeFailure = errorStr.includes('Connection Failure') ||
-                                                 errorRaw.includes('"location":"atn"') ||
-                                                 errorRaw.includes('decodeFrame');
+                                                  errorRaw.includes('"location":"atn"') ||
+                                                  errorRaw.includes('decodeFrame');
 
-                if (isNoiseHandshakeFailure) {
-                    console.log(chalk.yellow("⚠️ Noise handshake failure — clearing session for fresh QR..."));
-                    // ALWAYS purge on handshake failure: keep stale creds → infinite 401 loop
-                    try {
-                        fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
-                        if (!fs.existsSync(AUTH_FOLDER)) fs.mkdirSync(AUTH_FOLDER, { recursive: true });
-                        fs.writeFileSync(path.join(AUTH_FOLDER, '.skip-session-data'), 'true');
-                        const backupPaths = ['session_backup.txt', 'session_full_backup.txt'];
-                        for (const bp of backupPaths) {
-                            const p = path.join(__dirname, bp);
-                            if (fs.existsSync(p)) fs.unlinkSync(p);
-                        }
-                        console.log(chalk.green("✅ Session purged — fresh QR will be generated."));
-                    } catch (e) {
-                        console.error(chalk.red("❌ Failed to purge session:"), e.message);
-                    }
-                    broadcast({ type: 'status', message: 'Session rejetée — nouveau QR généré. Scanne-le vite.' });
-                    reconnectAttempts = 0;
-                    isStarting = false;
-                    isConnected = false;
-                    setTimeout(() => startBot(), 3000);
-                } else if (isDeviceRemoved) {
+                if (isDeviceRemoved) {
                     console.log(chalk.red("⚠️ device_removed conflict — session is dead. Purging for fresh QR..."));
                     try {
                         fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
@@ -1437,41 +1412,62 @@ async function startBot() {
                     isStarting = false;
                     isConnected = false;
                     setTimeout(() => startBot(), 3000);
-                } else {
-                    console.log(chalk.red("🛑 Genuine logout (401). Clearing session."));
-                    try {
-                        fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
-                        const backupPath = path.join(__dirname, 'session_backup.txt');
-                        if (fs.existsSync(backupPath)) {
-                            fs.unlinkSync(backupPath);
-                            console.log(chalk.yellow("🗑️ session_backup.txt deleted."));
+                } else if (reason === DisconnectReason.loggedOut || reason === 401) {
+                    console.log(chalk.red("🛑 401 received. Error details:"));
+                    console.log(chalk.gray("  message:"), lastDisconnect?.error?.message);
+                    console.log(chalk.gray("  raw:"), errorRaw);
+
+                    if (isNoiseHandshakeFailure) {
+                        console.log(chalk.yellow("⚠️ Noise handshake failure — clearing session for fresh QR..."));
+                        try {
+                            fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
+                            if (!fs.existsSync(AUTH_FOLDER)) fs.mkdirSync(AUTH_FOLDER, { recursive: true });
+                            fs.writeFileSync(path.join(AUTH_FOLDER, '.skip-session-data'), 'true');
+                            const backupPaths = ['session_backup.txt', 'session_full_backup.txt'];
+                            for (const bp of backupPaths) {
+                                const p = path.join(__dirname, bp);
+                                if (fs.existsSync(p)) fs.unlinkSync(p);
+                            }
+                            console.log(chalk.green("✅ Session purged — fresh QR will be generated."));
+                        } catch (e) {
+                            console.error(chalk.red("❌ Failed to purge session:"), e.message);
                         }
-                        fs.writeFileSync(path.join(AUTH_FOLDER, '.skip-session-data'), 'true');
-                        console.log(chalk.green("✅ Session cleared. Skipping SESSION_DATA on next boot."));
-                    } catch (e) {
-                        console.error(chalk.red("❌ Failed to clear session:"), e.message);
+                        broadcast({ type: 'status', message: 'Session rejetée — nouveau QR généré. Scanne-le vite.' });
+                        reconnectAttempts = 0;
+                        isStarting = false;
+                        isConnected = false;
+                        setTimeout(() => startBot(), 3000);
+                    } else {
+                        console.log(chalk.red("🛑 Genuine logout (401). Clearing session."));
+                        try {
+                            fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
+                            const backupPath = path.join(__dirname, 'session_backup.txt');
+                            if (fs.existsSync(backupPath)) {
+                                fs.unlinkSync(backupPath);
+                                console.log(chalk.yellow("🗑️ session_backup.txt deleted."));
+                            }
+                            fs.writeFileSync(path.join(AUTH_FOLDER, '.skip-session-data'), 'true');
+                            console.log(chalk.green("✅ Session cleared. Skipping SESSION_DATA on next boot."));
+                        } catch (e) {
+                            console.error(chalk.red("❌ Failed to clear session:"), e.message);
+                        }
+                        isStarting = false;
+                        reconnectAttempts++;
+                        setTimeout(() => startBot(), 5000);
                     }
-                    isStarting = false;
-                    reconnectAttempts++;
-                    setTimeout(() => startBot(), 5000);
-                }
-            } else if (reason === DisconnectReason.restartRequired) {
-                console.log(chalk.yellow("🔄 Restart required — restarting bot..."));
-                reconnectAttempts = 0;
-                isStarting = false;
-                setTimeout(() => startBot(), 3000);
-            } else {
-                reconnectAttempts++;
-                lastConnectedAt = 0;
-                if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-                    console.log(chalk.red.bold(`🛑 MAX RECONNECT ATTEMPTS (${MAX_RECONNECT_ATTEMPTS}) REACHED. Waiting 5min before retry...`));
-                    broadcast({ type: 'status', message: 'Too many retries. Pausing 5min...' });
-                    reconnectAttempts = 0;
-                    setTimeout(() => startBot(), 5 * 60 * 1000);
                 } else {
-                    const delay = Math.min(3000 * reconnectAttempts, 30000);
-                    console.log(chalk.yellow(`🔄 Reconnecting (Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}) in ${delay}ms...`));
-                    setTimeout(() => startBot(), delay);
+                    reconnectAttempts++;
+                    lastConnectedAt = 0;
+                    if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                        console.log(chalk.red.bold(`🛑 MAX RECONNECT ATTEMPTS (${MAX_RECONNECT_ATTEMPTS}) REACHED. Waiting 5min before retry...`));
+                        broadcast({ type: 'status', message: 'Too many retries. Pausing 5min...' });
+                        reconnectAttempts = 0;
+                        setTimeout(() => startBot(), 5 * 60 * 1000);
+                    } else {
+                        const delay = Math.min(3000 * reconnectAttempts, 30000);
+                        console.log(chalk.yellow(`🔄 Reconnecting (Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}) in ${delay}ms...`));
+                        setTimeout(() => startBot(), delay);
+                    }
                 }
             }
         } else if (connection === "open") {
