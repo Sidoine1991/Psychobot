@@ -1272,9 +1272,18 @@ async function startBot() {
 
     console.log(chalk.gray(`📦 Version Baileys: ${version}`));
 
-    const proxyAgent = process.env.PROXY_URL ? new HttpsProxyAgent(process.env.PROXY_URL) : undefined;
-    if (proxyAgent) {
-        console.log(chalk.cyan(`🌍 Proxy activé: ${process.env.PROXY_URL}`));
+    let proxyAgent = undefined;
+    if (process.env.PROXY_URL) {
+        try {
+            proxyAgent = new HttpsProxyAgent(process.env.PROXY_URL);
+            console.log(chalk.cyan(`🌍 Proxy activé: ${process.env.PROXY_URL}`));
+        } catch (e) {
+            // PROXY_URL invalide (placeholder, mauvaise URL) → on continue SANS proxy
+            // plutôt que de crasher startBot avant la création du socket.
+            console.error(chalk.red.bold("⚠️ PROXY_URL invalide, connexion SANS proxy:"), e.message);
+            console.error(chalk.yellow("   → Corrige la variable d'env PROXY_URL sur Render (URL complète et valide) ou supprime-la."));
+            proxyAgent = undefined;
+        }
     }
 
     console.log(chalk.cyan('[LOG] Creating WASocket...'));
