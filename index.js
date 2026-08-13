@@ -283,6 +283,17 @@ function getSessionFileCount() {
     return fs.readdirSync(AUTH_FOLDER).filter(f => f !== '.skip-session-data').length;
 }
 
+function hasValidSession() {
+    const credsPath = path.join(AUTH_FOLDER, 'creds.json');
+    if (!fs.existsSync(credsPath)) return false;
+    try {
+        const creds = JSON.parse(fs.readFileSync(credsPath, 'utf-8'));
+        return !!(creds?.me?.id);
+    } catch (e) {
+        return false;
+    }
+}
+
 async function copyPairSessionToAuth() {
     fs.mkdirSync(AUTH_FOLDER, { recursive: true });
     for (const file of fs.readdirSync(PAIR_FOLDER)) {
@@ -417,6 +428,7 @@ let lastConnectedAt = 0;
 let sock = null;
 let isPairingInProgress = false;
 let activePairSock = null;
+let isShuttingDown = false;
 let pairingStartedAt = 0;
 let lastPairingCode = null;
 let lastPairingNumber = null;
@@ -1363,11 +1375,17 @@ async function startBot() {
         } catch (e) {}
     }
 
-    // RENDER SETTLING DELAY — only when reconnecting an existing session (not fresh QR)
+    // RENDER SETTLING DELAY
     const isRender = process.env.RENDER || process.env.RENDER_URL;
-    if (reconnectAttempts === 0 && isRender && fs.existsSync(credsPath)) {
-        console.log(chalk.yellow(`⏳ RENDER STABILISATION: Waiting 5s...`));
-        await sleep(5000);
+    if (reconnectAttempts === 0 && isRender) {
+        if (fs.existsSync(credsPath)) {
+            console.log(chalk.yellow(`⏳ RENDER STABILISATION: Waiting 5s...`));
+            await sleep(5000);
+        } else {
+            // Post-deploy: wait for old instance SIGTERM before showing QR
+            console.log(chalk.yellow(`⏳ RENDER POST-DEPLOY: Waiting 8s before QR...`));
+            await sleep(8000);
+        }
     }
 
     console.log(chalk.cyan("🚀 Connexion au socket WhatsApp..."));
@@ -1526,6 +1544,10 @@ async function startBot() {
         }
 
         if (connection === "close") {
+            if (isShuttingDown) {
+                console.log(chalk.gray('[Bot] Close ignored — shutting down (SIGTERM/deploy)'));
+                return;
+            }
             if (isPairingInProgress) {
                 console.log(chalk.gray('[Bot] Close ignored — pairing in progress'));
                 return;
@@ -1614,12 +1636,21 @@ async function startBot() {
                 } else if (reason === DisconnectReason.loggedOut || reason === 401) {
                     const isNoiseHandshakeFailure = errorStr.includes('Connection Failure') ||
                                                   errorRaw.includes('"location":"atn"') ||
+                                                  errorRaw.includes('"location":"cln"') ||
                                                   errorRaw.includes('decodeFrame');
                     console.log(chalk.red("🛑 401 received. Error details:"));
                     console.log(chalk.gray("  message:"), lastDisconnect?.error?.message);
                     console.log(chalk.gray("  raw:"), errorRaw);
 
-                    if (isNoiseHandshakeFailure) {
+                    if (isNoiseHandshakeFailure && !hasValidSession()) {
+                        console.log(chalk.yellow('⚠️ 401 pendant appairage (cln/atn) — retry sans purge...'));
+                        broadcast({ type: 'status', message: 'WhatsApp CDN busy — nouveau QR dans 5s...' });
+                        reconnectAttempts = 0;
+                        isStarting = false;
+                        isConnected = false;
+                        closeSocket();
+                        setTimeout(() => startBot(), 5000);
+                    } else if (isNoiseHandshakeFailure) {
                         console.log(chalk.yellow("⚠️ Noise handshake failure — clearing session for fresh QR..."));
                         try {
                             fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
@@ -2762,10 +2793,10 @@ process.on('unhandledRejection', (reason, promise) => {
 
 process.on('SIGTERM', async () => {
     console.log(chalk.red("\n🛑 SIGTERM RECEIVED. Shutting down bot..."));
-    if (sock) {
-        sock.end();
-        console.log(chalk.gray("Socket closed."));
-    }
+    isShuttingDown = true;
+    cancelAllPendingReplies('SIGTERM');
+    closeSocket();
+    console.log(chalk.gray("Socket closed."));
     process.exit(0);
 });
 
