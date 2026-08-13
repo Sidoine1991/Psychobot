@@ -1152,25 +1152,9 @@ async function startBot() {
     let skipSessionData = false;
     if (fs.existsSync(skipSessionDataFlag)) {
         skipSessionData = true;
-        console.log(chalk.yellow('⚠️ SKIP_SESSION_DATA flag detected. Forcing fresh QR.'));
-        // Flag is kept until a successful connection (deleted in 'open' handler)
-    }
-
-    // If flag was set, also clear AUTH_FOLDER to be safe
-    if (skipSessionData && fs.existsSync(AUTH_FOLDER)) {
-        try {
-            fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
-            if (!fs.existsSync(AUTH_FOLDER)) fs.mkdirSync(AUTH_FOLDER, { recursive: true });
-            fs.writeFileSync(skipSessionDataFlag, 'true'); // re-create flag on persistent disk
-            // Also clear backups to prevent stale session restoration
-            const backupPaths = ['session_backup.txt', 'session_full_backup.txt'];
-            for (const bp of backupPaths) {
-                const p = path.join(__dirname, bp);
-                if (fs.existsSync(p)) fs.unlinkSync(p);
-            }
-        } catch (e) {
-            console.error('Failed to clear AUTH_FOLDER:', e.message);
-        }
+        console.log(chalk.yellow('⚠️ SKIP_SESSION_DATA flag detected. Ignoring env SESSION_DATA restore only.'));
+        // Do NOT wipe AUTH_FOLDER here — that destroyed fresh QR sessions on restartRequired (515).
+        // Session purge is handled once in /logout, /new-qr, and 401 handlers.
     }
 
     header();
