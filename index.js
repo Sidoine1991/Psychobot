@@ -37,6 +37,19 @@ function cancelPendingReply(jid) {
     }
 }
 
+function cancelAllPendingReplies(reason = 'shutdown') {
+    if (pendingReplies.size === 0) return;
+    for (const [jid, pending] of pendingReplies) {
+        clearTimeout(pending.timer);
+    }
+    pendingReplies.clear();
+    console.log(`[DelayedReply] ⏹ Cleared all pending replies (${reason})`);
+}
+
+function canSendDelayedReply() {
+    return isConnected && sock?.user?.id;
+}
+
 function cancelAllPendingRepliesForJid(jid) {
     cancelPendingReply(jid);
 }
@@ -1315,6 +1328,7 @@ async function startBot() {
         console.log(chalk.yellow('[Bot] startBot skipped — pairing in progress'));
         return;
     }
+    cancelAllPendingReplies('bot restart');
     isStarting = true;
     isConnected = false;
     closeSocket();
@@ -1516,6 +1530,7 @@ async function startBot() {
                 console.log(chalk.gray('[Bot] Close ignored — pairing in progress'));
                 return;
             }
+            cancelAllPendingReplies('disconnected');
 
             const reason = lastDisconnect?.error?.output?.statusCode;
             const errorMsg = lastDisconnect?.error?.message || "";
@@ -1992,6 +2007,10 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
                 const timerAudio = setTimeout(async () => {
                     pendingReplies.delete(remoteJid);
 
+                    if (!canSendDelayedReply()) {
+                        console.log(`[DelayedReply] Bot offline — skipping audio reply for ${remoteJid}`);
+                        return;
+                    }
                     if (isConversationActive(remoteJid)) {
                         console.log(`[DelayedReply] Owner responded during audio wait — aborting for ${remoteJid}`);
                         return;
@@ -2043,6 +2062,10 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
                 const timerMedia = setTimeout(async () => {
                     pendingReplies.delete(remoteJid);
 
+                    if (!canSendDelayedReply()) {
+                        console.log(`[DelayedReply] Bot offline — skipping media ack for ${remoteJid}`);
+                        return;
+                    }
                     if (isConversationActive(remoteJid)) {
                         console.log(`[DelayedReply] Owner responded during media wait — aborting for ${remoteJid}`);
                         return;
@@ -2087,7 +2110,10 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
             const timer = setTimeout(async () => {
                 pendingReplies.delete(remoteJid);
 
-                // Re-check: if owner responded during the 15 min wait, abort
+                if (!canSendDelayedReply()) {
+                    console.log(`[DelayedReply] Bot offline — skipping reply for ${remoteJid}`);
+                    return;
+                }
                 if (isConversationActive(remoteJid)) {
                     console.log(`[DelayedReply] Owner responded during wait — aborting for ${remoteJid}`);
                     return;
@@ -2110,11 +2136,16 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
                     }
                 } catch (err) {
                     console.error("[DelayedReply] AI Error:", err.message);
+                    if (!canSendDelayedReply()) return;
 
-                    const template = getAutoReplyTemplate(autoReplyDecision, messageType, text);
-                    const reply = formatReplyForWhatsApp(template, true);
-                    if (reply) {
-                        await sock.sendMessage(remoteJid, { text: reply });
+                    try {
+                        const template = getAutoReplyTemplate(autoReplyDecision, messageType, text);
+                        const reply = formatReplyForWhatsApp(template, true);
+                        if (reply) {
+                            await sock.sendMessage(remoteJid, { text: reply });
+                        }
+                    } catch (sendErr) {
+                        console.error('[DelayedReply] Fallback send failed:', sendErr.message);
                     }
                 }
             }, DELAYED_REPLY_MS);
