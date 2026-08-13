@@ -105,6 +105,7 @@ async function getAIResponse(prompt, systemPrompt = null) {
 // --- Configuration ---
 const PORT = process.env.PORT || 10000;
 const AUTH_FOLDER = path.join(__dirname, "session");
+const PAIR_FOLDER = path.join(__dirname, "auth_info_baileys");
 const PREFIX = "!";
 const BOT_NAME = "PSYCHO BOT";
 const OWNER_PN = process.env.OWNER_NUMBER || "2290196911346";
@@ -239,6 +240,123 @@ function getSessionFileCount() {
     return fs.readdirSync(AUTH_FOLDER).filter(f => f !== '.skip-session-data').length;
 }
 
+async function copyPairSessionToAuth() {
+    fs.mkdirSync(AUTH_FOLDER, { recursive: true });
+    for (const file of fs.readdirSync(PAIR_FOLDER)) {
+        const src = path.join(PAIR_FOLDER, file);
+        if (!fs.statSync(src).isFile() || file === '.skip-session-data') continue;
+        fs.copyFileSync(src, path.join(AUTH_FOLDER, file));
+    }
+    const skipFlag = path.join(AUTH_FOLDER, '.skip-session-data');
+    if (fs.existsSync(skipFlag)) fs.unlinkSync(skipFlag);
+    console.log(chalk.green(`[Pair] Session copied to ${AUTH_FOLDER} (${getSessionFileCount()} files)`));
+    await backupFullSession();
+    const credsPath = path.join(AUTH_FOLDER, 'creds.json');
+    if (fs.existsSync(credsPath)) {
+        const credsRaw = fs.readFileSync(credsPath, 'utf-8');
+        fs.writeFileSync(path.join(__dirname, 'session_backup.txt'), Buffer.from(credsRaw).toString('base64'));
+    }
+    await syncSessionToRender();
+}
+
+function closePairSocket() {
+    if (!activePairSock) return;
+    try {
+        activePairSock.ev.removeAllListeners();
+        activePairSock.end(undefined);
+    } catch (e) {}
+    activePairSock = null;
+}
+
+function finishPairing(success) {
+    isPairingInProgress = false;
+    closePairSocket();
+    try { fs.rmSync(PAIR_FOLDER, { recursive: true, force: true }); } catch (e) {}
+    isStarting = false;
+    reconnectAttempts = 0;
+    console.log(chalk.cyan(`[Pair] Finished (${success ? 'success' : 'failed'}) — restarting main bot...`));
+    setTimeout(() => startBot().catch(err => console.error('[Pair] startBot error:', err)), 2000);
+}
+
+async function startPairConnection(phoneNum, res, codeAlreadySent = false) {
+    const pairLogger = pino({ level: 'fatal' }).child({ level: 'fatal' });
+    const { state, saveCreds } = await useMultiFileAuthState(PAIR_FOLDER);
+
+    let pairVersion;
+    try {
+        pairVersion = (await fetchLatestWaWebVersion()).version;
+    } catch (e) {
+        pairVersion = [2, 3000, 1045017392];
+    }
+
+    const pairSock = makeWASocket({
+        version: pairVersion,
+        auth: {
+            creds: state.creds,
+            keys: makeCacheableSignalKeyStore(state.keys, pairLogger),
+        },
+        logger: pairLogger,
+        browser: Browsers.windows('Chrome'),
+        printQRInTerminal: false,
+        connectTimeoutMs: 60000,
+        qrTimeout: 120000,
+        agent: resolveProxyAgent(),
+    });
+    activePairSock = pairSock;
+
+    pairSock.ev.on('creds.update', saveCreds);
+    pairSock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect } = update;
+
+        if (connection === 'open') {
+            console.log(chalk.green('[Pair] Connection open — copying session...'));
+            await delay(3000);
+            try {
+                await copyPairSessionToAuth();
+                finishPairing(true);
+            } catch (e) {
+                console.error(chalk.red('[Pair] Error copying session:'), e.message);
+                finishPairing(false);
+            }
+            return;
+        }
+
+        if (connection === 'close') {
+            const reason = lastDisconnect?.error?.output?.statusCode;
+            const errorMsg = lastDisconnect?.error?.message || '';
+            console.log(chalk.yellow(`[Pair] Connection closed: ${reason || errorMsg || 'Unknown'}`));
+
+            if (reason === DisconnectReason.restartRequired) {
+                console.log(chalk.yellow('[Pair] Restart required (515) — reconnecting with saved creds...'));
+                closePairSocket();
+                await delay(2000);
+                startPairConnection(phoneNum, res, true).catch(err => {
+                    console.error(chalk.red('[Pair] Restart failed:'), err.message);
+                    finishPairing(false);
+                });
+                return;
+            }
+
+            if (!codeAlreadySent) return; // still waiting for user to enter code
+            console.log(chalk.red('[Pair] Pairing failed after code was sent'));
+            finishPairing(false);
+        }
+    });
+
+    if (!codeAlreadySent) {
+        await delay(3000);
+        console.log(chalk.cyan(`[Pair] Requesting code for ${phoneNum}...`));
+        const code = await Promise.race([
+            pairSock.requestPairingCode(phoneNum),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Pairing code timeout')), 45000))
+        ]);
+        console.log(chalk.green(`[Pair] Code: ${code}`));
+        if (res && !res.headersSent) {
+            res.json({ code });
+        }
+    }
+}
+
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 10; // Limite max pour éviter les boucles infinies
 let bootStabilized = false;
@@ -247,6 +365,8 @@ let isConnected = false;
 let latestQR = null;
 let lastConnectedAt = 0;
 let sock = null;
+let isPairingInProgress = false;
+let activePairSock = null;
 
 const processedMessages = new Set();
 const messageCache = new Map();
@@ -373,123 +493,41 @@ app.get('/pair', (req, res) => {
     res.sendFile(__path + '/pair.html');
 });
 
-// Pairing code endpoint — creates a temp Baileys connection for phone-number pairing
+// Pairing code endpoint — isolated from main bot socket
 app.get('/code', async (req, res) => {
     let num = req.query.number;
     if (!num) {
         return res.status(400).json({ error: 'Missing ?number= parameter' });
     }
 
+    if (isPairingInProgress) {
+        return res.status(409).json({ error: 'Pairing already in progress. Enter the code on your phone or wait.' });
+    }
+
+    num = num.replace(/[^0-9]/g, '');
     console.log(chalk.cyan(`[Pair] Pairing code requested for ${num}`));
 
-    // End current socket if connected
-    try { if (sock) sock.end(); } catch (e) {}
-    // Wait for socket to fully close
-    await new Promise(r => setTimeout(r, 2000));
+    isPairingInProgress = true;
+    isStarting = false;
+    reconnectAttempts = 0;
+    closeSocket();
 
-    const pairFolder = path.join(__dirname, 'auth_info_baileys');
-    try { fs.rmSync(pairFolder, { recursive: true, force: true }); } catch (e) {}
-    try { fs.mkdirSync(pairFolder, { recursive: true }); } catch (e) {}
+    try { fs.rmSync(PAIR_FOLDER, { recursive: true, force: true }); } catch (e) {}
+    fs.mkdirSync(PAIR_FOLDER, { recursive: true });
 
-    const pairLogger = pino({ level: 'fatal' }).child({ level: 'fatal' });
+    // Let main socket close events settle without triggering reconnect
+    await delay(1500);
 
     try {
-        const { state, saveCreds } = await useMultiFileAuthState(pairFolder);
-        // Fetch latest WhatsApp Web version (required for pairing to work)
-        let pairVersion;
-        try {
-            const pairFetchResult = await fetchLatestWaWebVersion();
-            pairVersion = pairFetchResult.version;
-        } catch (e) {
-            console.log(chalk.yellow('[Pair] Version fetch timeout, using fallback'));
-            pairVersion = [2, 3000, 1045017392];
-        }
-        const pairProxyAgent = resolveProxyAgent();
-        const pairSock = makeWASocket({
-            version: pairVersion,
-            auth: {
-                creds: state.creds,
-                keys: makeCacheableSignalKeyStore(state.keys, pairLogger),
-            },
-            logger: pairLogger,
-            browser: Browsers.windows('Chrome'),
-            printQRInTerminal: false,
-            connectTimeoutMs: 30000,
-            agent: pairProxyAgent,
-        });
-
-        pairSock.ev.on('creds.update', saveCreds);
-        pairSock.ev.on('connection.update', async (update) => {
-            const { connection, lastDisconnect } = update;
-
-            if (connection === 'open') {
-                console.log(chalk.green('[Pair] Connection open — copying session...'));
-                await delay(5000);
-
-                const credsSrc = path.join(pairFolder, 'creds.json');
-                const credsDst = path.join(AUTH_FOLDER, 'creds.json');
-                try {
-                    fs.mkdirSync(AUTH_FOLDER, { recursive: true });
-                    fs.copyFileSync(credsSrc, credsDst);
-                    console.log(chalk.green('[Pair] Session saved to', AUTH_FOLDER));
-
-                    // Backup and sync to Render
-                    const credsRaw = fs.readFileSync(credsDst, 'utf-8');
-                    const sessionB64 = Buffer.from(credsRaw).toString('base64');
-                    fs.writeFileSync(path.join(__dirname, 'session_backup.txt'), sessionB64);
-                    if (pairSock?.user) await syncSessionToRender();
-
-                    // Clean up temp folder
-                    try { fs.rmSync(pairFolder, { recursive: true, force: true }); } catch (e) {}
-
-                    // Restart the main bot
-                    isStarting = false;
-                    reconnectAttempts = 0;
-                    setTimeout(() => startBot(), 2000);
-                } catch (e) {
-                    console.error(chalk.red('[Pair] Error copying session:'), e.message);
-                }
-            }
-
-            if (connection === 'close') {
-                const reason = lastDisconnect?.error?.output?.statusCode;
-                console.log(chalk.yellow(`[Pair] Connection closed: ${reason}`));
-                if (reason === DisconnectReason.restartRequired) {
-                    console.log(chalk.yellow('[Pair] Restart required — retrying...'));
-                    const { state: s2, saveCreds: sc2 } = await useMultiFileAuthState(pairFolder);
-                    // Re-request will happen via the connection loop
-                }
-            }
-        });
-
-        // Request pairing code
-        num = num.replace(/[^0-9]/g, '');
-        console.log(chalk.cyan(`[Pair] Requesting code for ${num}...`));
-        await delay(3000);
-        let code;
-        try {
-            code = await Promise.race([
-                pairSock.requestPairingCode(num),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Pairing code timeout')), 30000))
-            ]);
-        } catch (codeErr) {
-            console.error(chalk.red('[Pair] requestPairingCode failed:'), codeErr.message);
-            try { fs.rmSync(pairFolder, { recursive: true, force: true }); } catch (e) {}
-            if (!res.headersSent) {
-                return res.status(500).json({ error: 'Pairing code generation failed', details: codeErr.message });
-            }
-            return;
-        }
-        console.log(chalk.green(`[Pair] Code: ${code}`));
-        if (!res.headersSent) {
-            res.json({ code });
-        }
+        await startPairConnection(num, res, false);
     } catch (err) {
         console.error(chalk.red('[Pair] Error:'), err.message);
-        try { fs.rmSync(pairFolder, { recursive: true, force: true }); } catch (e) {}
+        try { fs.rmSync(PAIR_FOLDER, { recursive: true, force: true }); } catch (e) {}
+        isPairingInProgress = false;
         if (!res.headersSent) {
             res.status(500).json({ error: 'Pairing failed', details: err.message });
         }
+        setTimeout(() => startBot().catch(e => console.error('[Pair] recovery startBot:', e)), 3000);
     }
 });
 
@@ -1173,6 +1211,10 @@ wss.on('connection', (ws) => {
 // --- Baileys Core ---
 async function startBot() {
     if (isStarting) return;
+    if (isPairingInProgress) {
+        console.log(chalk.yellow('[Bot] startBot skipped — pairing in progress'));
+        return;
+    }
     isStarting = true;
     isConnected = false;
     closeSocket();
@@ -1377,6 +1419,11 @@ async function startBot() {
         }
 
         if (connection === "close") {
+            if (isPairingInProgress) {
+                console.log(chalk.gray('[Bot] Close ignored — pairing in progress'));
+                return;
+            }
+
             const reason = lastDisconnect?.error?.output?.statusCode;
             const errorMsg = lastDisconnect?.error?.message || "";
             const isCritical = errorMsg.includes("PreKey") || errorMsg.includes("Bad MAC") || errorMsg.includes("Session error");
