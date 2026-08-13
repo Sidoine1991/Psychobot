@@ -205,15 +205,44 @@
             instruction.style.display = 'none';
 
             try {
-                const response = await fetch(`/code?number=${number}`);
+                const response = await fetch(`/code?number=${encodeURIComponent(number)}`);
                 const data = await response.json();
+
+                if (response.status === 409) {
+                    if (data.code) {
+                        codeDisplay.innerText = data.code;
+                        codeDisplay.style.display = 'block';
+                        instruction.style.display = 'block';
+                        errorMsg.innerText = 'Un code est déjà actif — entrez-le sur WhatsApp.';
+                        errorMsg.style.display = 'block';
+                        return;
+                    }
+                    const retry = confirm('Pairing en cours. Forcer un nouveau code ?');
+                    if (retry) {
+                        const r2 = await fetch(`/code?number=${encodeURIComponent(number)}&force=1`);
+                        const d2 = await r2.json();
+                        if (d2.code) {
+                            codeDisplay.innerText = d2.code;
+                            codeDisplay.style.display = 'block';
+                            instruction.style.display = 'block';
+                        } else {
+                            alert(d2.error || 'Échec du nouveau code.');
+                        }
+                    }
+                    return;
+                }
 
                 if (data.code) {
                     codeDisplay.innerText = data.code;
                     codeDisplay.style.display = 'block';
                     instruction.style.display = 'block';
+                    if (data.reused) {
+                        errorMsg.innerText = 'Code existant — entrez-le sur WhatsApp si pas encore fait.';
+                        errorMsg.style.display = 'block';
+                        errorMsg.style.color = '#f0ad4e';
+                    }
                 } else {
-                    alert('Failed to get code. Please try again.');
+                    alert(data.error || 'Failed to get code. Please try again.');
                 }
             } catch (err) {
                 console.error(err);

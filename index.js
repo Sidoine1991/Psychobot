@@ -270,8 +270,13 @@ function closePairSocket() {
 
 function finishPairing(success) {
     isPairingInProgress = false;
+    clearPairingTimeout();
     closePairSocket();
     try { fs.rmSync(PAIR_FOLDER, { recursive: true, force: true }); } catch (e) {}
+    if (!success) {
+        lastPairingCode = null;
+        lastPairingNumber = null;
+    }
     isStarting = false;
     reconnectAttempts = 0;
     console.log(chalk.cyan(`[Pair] Finished (${success ? 'success' : 'failed'}) — restarting main bot...`));
@@ -351,6 +356,8 @@ async function startPairConnection(phoneNum, res, codeAlreadySent = false) {
             new Promise((_, reject) => setTimeout(() => reject(new Error('Pairing code timeout')), 45000))
         ]);
         console.log(chalk.green(`[Pair] Code: ${code}`));
+        lastPairingCode = code;
+        lastPairingNumber = phoneNum;
         if (res && !res.headersSent) {
             res.json({ code });
         }
@@ -367,6 +374,42 @@ let lastConnectedAt = 0;
 let sock = null;
 let isPairingInProgress = false;
 let activePairSock = null;
+let pairingStartedAt = 0;
+let lastPairingCode = null;
+let lastPairingNumber = null;
+let pairingTimeoutHandle = null;
+
+const PAIRING_LOCK_MS = 5 * 60 * 1000;
+
+function clearPairingTimeout() {
+    if (pairingTimeoutHandle) {
+        clearTimeout(pairingTimeoutHandle);
+        pairingTimeoutHandle = null;
+    }
+}
+
+function resetPairingState() {
+    isPairingInProgress = false;
+    clearPairingTimeout();
+    closePairSocket();
+    try { fs.rmSync(PAIR_FOLDER, { recursive: true, force: true }); } catch (e) {}
+}
+
+function isPairingStale() {
+    if (!isPairingInProgress) return true;
+    return Date.now() - pairingStartedAt > PAIRING_LOCK_MS;
+}
+
+function armPairingTimeout() {
+    clearPairingTimeout();
+    pairingTimeoutHandle = setTimeout(() => {
+        if (!isPairingInProgress) return;
+        console.log(chalk.yellow('[Pair] Timeout (5 min) — releasing pairing lock'));
+        lastPairingCode = null;
+        lastPairingNumber = null;
+        finishPairing(false);
+    }, PAIRING_LOCK_MS);
+}
 
 const processedMessages = new Set();
 const messageCache = new Map();
@@ -494,20 +537,47 @@ app.get('/pair', (req, res) => {
 });
 
 // Pairing code endpoint — isolated from main bot socket
+app.get('/code/cancel', (req, res) => {
+    console.log(chalk.yellow('[Pair] Cancel requested'));
+    resetPairingState();
+    lastPairingCode = null;
+    lastPairingNumber = null;
+    isStarting = false;
+    res.json({ success: true, message: 'Pairing cancelled. You can request a new code.' });
+    setTimeout(() => startBot().catch(e => console.error('[Pair] cancel recovery:', e)), 2000);
+});
+
 app.get('/code', async (req, res) => {
     let num = req.query.number;
     if (!num) {
         return res.status(400).json({ error: 'Missing ?number= parameter' });
     }
 
+    num = num.replace(/[^0-9]/g, '');
+    const force = req.query.force === '1' || req.query.force === 'true';
+
     if (isPairingInProgress) {
-        return res.status(409).json({ error: 'Pairing already in progress. Enter the code on your phone or wait.' });
+        if (lastPairingCode && lastPairingNumber === num && !isPairingStale()) {
+            return res.json({ code: lastPairingCode, reused: true });
+        }
+        if (!force && !isPairingStale()) {
+            return res.status(409).json({
+                error: 'Pairing already in progress. Enter the code on your phone, wait, or add ?force=1 to restart.',
+                code: lastPairingCode || undefined
+            });
+        }
+        console.log(chalk.yellow('[Pair] Resetting previous pairing session...'));
+        resetPairingState();
+        await delay(1000);
     }
 
-    num = num.replace(/[^0-9]/g, '');
     console.log(chalk.cyan(`[Pair] Pairing code requested for ${num}`));
 
     isPairingInProgress = true;
+    pairingStartedAt = Date.now();
+    lastPairingCode = null;
+    lastPairingNumber = num;
+    armPairingTimeout();
     isStarting = false;
     reconnectAttempts = 0;
     closeSocket();
@@ -515,15 +585,15 @@ app.get('/code', async (req, res) => {
     try { fs.rmSync(PAIR_FOLDER, { recursive: true, force: true }); } catch (e) {}
     fs.mkdirSync(PAIR_FOLDER, { recursive: true });
 
-    // Let main socket close events settle without triggering reconnect
     await delay(1500);
 
     try {
         await startPairConnection(num, res, false);
     } catch (err) {
         console.error(chalk.red('[Pair] Error:'), err.message);
-        try { fs.rmSync(PAIR_FOLDER, { recursive: true, force: true }); } catch (e) {}
-        isPairingInProgress = false;
+        resetPairingState();
+        lastPairingCode = null;
+        lastPairingNumber = null;
         if (!res.headersSent) {
             res.status(500).json({ error: 'Pairing failed', details: err.message });
         }
