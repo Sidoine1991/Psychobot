@@ -193,12 +193,15 @@ async function clearSessionOnRender() {
     const serviceId = process.env.RENDER_SERVICE_ID;
     if (!apiKey || !serviceId) return;
     try {
-        await axios.put(`https://api.render.com/v1/services/${serviceId}/env-vars/SESSION_DATA`,
-            { value: '' },
-            { headers: { Authorization: `Bearer ${apiKey}`, "Accept": "application/json", "Content-Type": "application/json" } }
-        );
-        console.log(chalk.yellow('🗑️ [Render API] SESSION_DATA cleared'));
+        await axios.delete(`https://api.render.com/v1/services/${serviceId}/env-vars/SESSION_DATA`, {
+            headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' }
+        });
+        console.log(chalk.yellow('🗑️ [Render API] SESSION_DATA deleted'));
     } catch (e) {
+        if (e.response?.status === 404) {
+            console.log(chalk.gray('[Render API] SESSION_DATA already absent'));
+            return;
+        }
         console.error(chalk.yellow('[Render API] Failed to clear SESSION_DATA:'), e.response?.data || e.message);
     }
 }
