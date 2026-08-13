@@ -281,6 +281,61 @@ function closeSocket() {
     sock = null;
 }
 
+function isSocketOpen() {
+    try {
+        return !!(sock?.ws?.isOpen);
+    } catch (e) {
+        return false;
+    }
+}
+
+function getWhatsAppStatus() {
+    const user = sock?.user?.id?.split(':')[0] || null;
+    const socketOpen = isSocketOpen();
+    const connected = isConnected && socketOpen && !!user;
+    return {
+        connected,
+        flag: isConnected,
+        socketOpen,
+        user,
+        lastConnectedAt: lastConnectedAt || null,
+        connectedForSec: lastConnectedAt ? Math.floor((Date.now() - lastConnectedAt) / 1000) : 0,
+    };
+}
+
+async function markWhatsAppDisconnected(reason) {
+    if (!isConnected && !sock) return;
+    console.log(chalk.red(`[Watchdog] WhatsApp offline: ${reason}`));
+    isConnected = false;
+    broadcast({ type: 'disconnected', message: reason || 'WhatsApp disconnected' });
+    closeSocket();
+    if (!isShuttingDown && !isPairingInProgress && !isStarting) {
+        reconnectAttempts = 0;
+        setTimeout(() => startBot().catch(e => console.error('[Watchdog restart]', e.message)), 3000);
+    }
+}
+
+async function watchdogWhatsApp() {
+    if (isShuttingDown || isPairingInProgress || isStarting) return;
+    const status = getWhatsAppStatus();
+    if (!status.flag && !sock?.user) return;
+
+    if (status.flag && (!status.socketOpen || !sock?.user)) {
+        await markWhatsAppDisconnected('Socket fermé (watchdog)');
+        return;
+    }
+    if (!status.connected) return;
+
+    try {
+        await Promise.race([
+            sock.sendPresenceUpdate('available'),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('presence timeout')), 15000))
+        ]);
+    } catch (e) {
+        await markWhatsAppDisconnected(`Ping WhatsApp échoué: ${e.message}`);
+    }
+}
+
 function getSessionFileCount() {
     if (!fs.existsSync(AUTH_FOLDER)) return 0;
     return fs.readdirSync(AUTH_FOLDER).filter(f => f !== '.skip-session-data').length;
@@ -1063,8 +1118,13 @@ app.get('/logout', (req, res) => {
 
 // Health check endpoint
 app.get('/health', (req, res) => res.status(200).send('OK'));
+app.get('/wa-status', (req, res) => {
+    const wa = getWhatsAppStatus();
+    res.status(wa.connected ? 200 : 503).json(wa);
+});
 app.get('/ping', (req, res) => res.status(200).json({
     status: 'alive',
+    whatsapp: getWhatsAppStatus(),
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
     service: BOT_NAME
@@ -1330,8 +1390,10 @@ wss.on('connection', (ws) => {
             const ageSec = latestQRAt ? Math.floor((Date.now() - latestQRAt) / 1000) : 0;
             ws.send(JSON.stringify({ type: 'qr', qr: url, ageSec, expiresIn: Math.max(0, 120 - ageSec) }));
         });
-    } else if (isConnected && sock?.user) {
+    } else if (getWhatsAppStatus().connected) {
         ws.send(JSON.stringify({ type: 'connected', user: sock.user.id.split(':')[0] }));
+    } else if (isConnected && !isSocketOpen()) {
+        ws.send(JSON.stringify({ type: 'disconnected', message: 'WhatsApp socket fermé — reconnexion...' }));
     } else {
         ws.send(JSON.stringify({ type: 'status', message: 'Waiting for QR code...' }));
     }
@@ -1724,8 +1786,16 @@ async function startBot() {
             latestQR = null;
             latestQRAt = 0;
             reconnectAttempts = 0;
-            criticalErrorCount = 0; // Reset error counter on success
+            criticalErrorCount = 0;
             isStarting = false;
+
+            // Verify socket is actually usable before declaring connected
+            await delay(3000);
+            if (!sock?.user?.id || !isSocketOpen()) {
+                console.log(chalk.yellow('[Open] Socket instable — attente reconnexion Baileys...'));
+                return;
+            }
+
             isConnected = true;
             lastConnectedAt = Date.now();
             console.log(chalk.green.bold("\n✅ PSYCHOBOT ONLINE AND CONNECTED !"));
@@ -2500,8 +2570,7 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
     });
 }
 
-// --- Anti-Idle (Keep Alive) ---
-// Self-ping every 5 minutes to keep the instance alive on Render Free Tier
+// --- Anti-Idle (Keep Alive) + WhatsApp watchdog ---
 cron.schedule('*/5 * * * *', async () => {
     try {
         const renderUrl = process.env.RENDER_URL;
@@ -2513,6 +2582,10 @@ cron.schedule('*/5 * * * *', async () => {
     } catch (error) {
         console.error(chalk.red('❌ Factory Keep-alive failed:'), error.message);
     }
+});
+
+cron.schedule('*/2 * * * *', () => {
+    watchdogWhatsApp().catch(e => console.error('[Watchdog]', e.message));
 });
 
 loadCommands();
