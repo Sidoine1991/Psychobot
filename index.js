@@ -1450,6 +1450,9 @@ async function startBot() {
                         console.log(chalk.red("🛑 Genuine logout (401). Clearing session."));
                         try {
                             fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
+                            // Recreate the folder BEFORE writing the skip flag, otherwise
+                            // writeFileSync throws ENOENT and the flag is never set → loop.
+                            if (!fs.existsSync(AUTH_FOLDER)) fs.mkdirSync(AUTH_FOLDER, { recursive: true });
                             const backupPath = path.join(__dirname, 'session_backup.txt');
                             if (fs.existsSync(backupPath)) {
                                 fs.unlinkSync(backupPath);
