@@ -209,8 +209,39 @@ async function restoreFullSession() {
     }
 }
 
+/** Ignore empty/placeholder PROXY_URL values (common misconfig on Render). */
+function resolveProxyAgent() {
+    const raw = (process.env.PROXY_URL || '').trim();
+    if (!raw || /^(none|null|undefined|false|n\/a|disabled)$/i.test(raw)) {
+        return undefined;
+    }
+    try {
+        new URL(raw);
+        console.log(chalk.cyan(`🌍 Proxy activé: ${raw}`));
+        return new HttpsProxyAgent(raw);
+    } catch (e) {
+        console.log(chalk.gray('ℹ️ PROXY_URL ignorée — connexion directe.'));
+        return undefined;
+    }
+}
+
+function closeSocket() {
+    if (!sock) return;
+    try {
+        sock.ev.removeAllListeners();
+        sock.end(undefined);
+    } catch (e) {}
+    sock = null;
+}
+
+function getSessionFileCount() {
+    if (!fs.existsSync(AUTH_FOLDER)) return 0;
+    return fs.readdirSync(AUTH_FOLDER).filter(f => f !== '.skip-session-data').length;
+}
+
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 10; // Limite max pour éviter les boucles infinies
+let bootStabilized = false;
 let isStarting = false;
 let isConnected = false;
 let latestQR = null;
@@ -373,7 +404,7 @@ app.get('/code', async (req, res) => {
             console.log(chalk.yellow('[Pair] Version fetch timeout, using fallback'));
             pairVersion = [2, 3000, 1045017392];
         }
-        const pairProxyAgent = process.env.PROXY_URL ? new HttpsProxyAgent(process.env.PROXY_URL) : undefined;
+        const pairProxyAgent = resolveProxyAgent();
         const pairSock = makeWASocket({
             version: pairVersion,
             auth: {
@@ -1144,6 +1175,7 @@ async function startBot() {
     if (isStarting) return;
     isStarting = true;
     isConnected = false;
+    closeSocket();
 
     console.log(chalk.cyan('=== STARTBOT CALLED [v2] ==='));
 
@@ -1160,22 +1192,30 @@ async function startBot() {
     header();
     broadcast({ type: 'status', message: 'Starting Bot...' });
 
-    // RENDER SETTLING DELAY (Crucial to avoid session conflicts during deployment handover)
+    // Ensure session folder exists
+    if (!fs.existsSync(AUTH_FOLDER)) fs.mkdirSync(AUTH_FOLDER, { recursive: true });
+
+    const credsPath = path.join(AUTH_FOLDER, 'creds.json');
+
+    // Valid creds on disk → clear stale skip flag (common on Render persistent disk)
+    if (skipSessionData && fs.existsSync(credsPath)) {
+        try {
+            JSON.parse(fs.readFileSync(credsPath, 'utf-8'));
+            fs.unlinkSync(skipSessionDataFlag);
+            skipSessionData = false;
+            console.log(chalk.green('✅ skip-session-data cleared — session valide sur disque.'));
+        } catch (e) {}
+    }
+
+    // RENDER SETTLING DELAY — only when reconnecting an existing session (not fresh QR)
     const isRender = process.env.RENDER || process.env.RENDER_URL;
-    if (reconnectAttempts === 0 && isRender) {
-        // Wait 5s only — long delays cause QR timeouts
+    if (reconnectAttempts === 0 && isRender && fs.existsSync(credsPath)) {
         console.log(chalk.yellow(`⏳ RENDER STABILISATION: Waiting 5s...`));
         await sleep(5000);
     }
 
     console.log(chalk.cyan("🚀 Connexion au socket WhatsApp..."));
     broadcast({ type: 'status', message: 'Connecting to WhatsApp...' });
-
-    // Ensure session folder exists
-    if (!fs.existsSync(AUTH_FOLDER)) fs.mkdirSync(AUTH_FOLDER, { recursive: true });
-
-    // --- SESSION_DATA Support (for Permanent Render Connection) ---
-    const credsPath = path.join(AUTH_FOLDER, 'creds.json');
 
     // Safety: If creds.json exists but is invalid/corrupted, delete it
     if (fs.existsSync(credsPath)) {
@@ -1189,49 +1229,43 @@ async function startBot() {
         }
     }
     const backupPath = path.join(__dirname, 'session_backup.txt');
+    const diskSessionFiles = getSessionFileCount();
 
-    // Priorité 1 : SESSION_DATA env var (configuré manuellement sur Render)
-    // BUT: Skip if SKIP_SESSION_DATA is set (happens after 401 error to force fresh QR)
-    if (process.env.SESSION_DATA && !fs.existsSync(credsPath) && !skipSessionData && !process.env.SKIP_SESSION_DATA) {
+    // Priorité 1 : backup complet (creds + pre-keys + sessions) — never overwrite disk session
+    if (!skipSessionData && !process.env.SKIP_SESSION_DATA && diskSessionFiles === 0) {
+        const restored = await restoreFullSession();
+        if (restored) {
+            console.log(chalk.green("✅ Session complète restaurée depuis session_full_backup.txt."));
+        }
+    }
+
+    // Priorité 2 : backup local session_backup.txt (si disque vide)
+    if (!skipSessionData && getSessionFileCount() === 0 && fs.existsSync(backupPath)) {
+        console.log(chalk.blue("🔹 Backup local détecté. Restauration session..."));
+        try {
+            const sessionBuffer = Buffer.from(fs.readFileSync(backupPath, 'utf-8').trim(), 'base64').toString('utf-8');
+            JSON.parse(sessionBuffer);
+            fs.writeFileSync(credsPath, sessionBuffer);
+            console.log(chalk.green("✅ Session restaurée depuis session_backup.txt."));
+        } catch (e) {
+            console.error(chalk.red("❌ Backup invalide:"), e.message);
+        }
+    }
+
+    // Priorité 3 : SESSION_DATA env — only if disk is completely empty (avoid stale overwrite)
+    const sessionDataRaw = (process.env.SESSION_DATA || '').trim();
+    if (sessionDataRaw && getSessionFileCount() === 0 && !skipSessionData && !process.env.SKIP_SESSION_DATA) {
         console.log(chalk.blue("🔹 SESSION_DATA détectée. Restauration de la session..."));
         try {
-            const sessionBuffer = Buffer.from(process.env.SESSION_DATA, 'base64').toString('utf-8');
+            const sessionBuffer = Buffer.from(sessionDataRaw, 'base64').toString('utf-8');
             JSON.parse(sessionBuffer);
             fs.writeFileSync(credsPath, sessionBuffer);
             console.log(chalk.green("✅ Session restaurée depuis SESSION_DATA."));
         } catch (e) {
             console.error(chalk.red("❌ SESSION_DATA invalide:"), e.message);
         }
-    }
-
-    // Priorité 2 : backup local session_backup.txt (si creds.json absent)
-    if (!skipSessionData && !fs.existsSync(credsPath) && fs.existsSync(backupPath)) {
-        console.log(chalk.blue("🔹 Backup local détecté. Restauration session..."));
-        try {
-            const sessionBuffer = Buffer.from(fs.readFileSync(backupPath, 'utf-8').trim(), 'base64').toString('utf-8');
-            const backupData = JSON.parse(sessionBuffer);
-
-            // SAFETY: Always restore — Baileys manages registration internally
-                fs.writeFileSync(credsPath, sessionBuffer);
-                console.log(chalk.green("✅ Session restaurée depuis session_backup.txt."));
-        } catch (e) {
-            console.error(chalk.red("❌ Backup invalide:"), e.message);
-        }
-    }
-
-    // --- CORRUPTED SESSION DETECTION ---
-    // DISABLED: The automatic purge was destroying valid sessions.
-    // After a QR scan, Baileys saves creds with registered=false and completes
-    // registration during the error-515 reconnect cycle. If the bot restarts
-    // for any reason (deploy, network blip) after 120s, the purge would destroy
-    // the valid session. Users can manually purge via /logout or /new-qr.
-
-    // Priorité 3 : backup complet (creds + pre-keys + sessions)
-    if (!skipSessionData && !process.env.SKIP_SESSION_DATA && !fs.existsSync(credsPath)) {
-        const restored = await restoreFullSession();
-        if (restored) {
-            console.log(chalk.green("✅ Session complète restaurée depuis session_full_backup.txt."));
-        }
+    } else if (sessionDataRaw && getSessionFileCount() > 0) {
+        console.log(chalk.gray('ℹ️ SESSION_DATA ignorée — session disque prioritaire.'));
     }
 
     console.log(chalk.cyan('[LOG] Loading auth state...'));
@@ -1256,19 +1290,7 @@ async function startBot() {
 
     console.log(chalk.gray(`📦 Version Baileys: ${version}`));
 
-    let proxyAgent = undefined;
-    if (process.env.PROXY_URL) {
-        try {
-            proxyAgent = new HttpsProxyAgent(process.env.PROXY_URL);
-            console.log(chalk.cyan(`🌍 Proxy activé: ${process.env.PROXY_URL}`));
-        } catch (e) {
-            // PROXY_URL invalide (placeholder, mauvaise URL) → on continue SANS proxy
-            // plutôt que de crasher startBot avant la création du socket.
-            console.error(chalk.red.bold("⚠️ PROXY_URL invalide, connexion SANS proxy:"), e.message);
-            console.error(chalk.yellow("   → Corrige la variable d'env PROXY_URL sur Render (URL complète et valide) ou supprime-la."));
-            proxyAgent = undefined;
-        }
-    }
+    const proxyAgent = resolveProxyAgent();
 
     console.log(chalk.cyan('[LOG] Creating WASocket...'));
     
@@ -1281,11 +1303,12 @@ async function startBot() {
         logger,
         browser: Browsers.windows('Chrome'),
         printQRInTerminal: false,
-        markOnlineOnConnect: true,
+        markOnlineOnConnect: false,
         generateHighQualityLinkPreview: true,
         connectTimeoutMs: 60000,
+        qrTimeout: 120000,
         defaultQueryTimeoutMs: 0,
-        keepAliveIntervalMs: 10000,
+        keepAliveIntervalMs: 30000,
         retryRequestDelayMs: 2000,
         maxMsgRetryCount: 5,
         syncFullHistory: false,
@@ -1376,17 +1399,34 @@ async function startBot() {
             isConnected = false;
             const errorRaw = JSON.stringify(lastDisconnect?.error || {});
 
-            if (reason === DisconnectReason.connectionReplaced || reason === 440 || reason === 405) {
-                console.log(chalk.red("⚠️ Session Conflict. Restarting..."));
-                sock.end();
-                process.exit(1);
-            } else if (reason === DisconnectReason.restartRequired) {
-                console.log(chalk.yellow("🔄 Restart required — restarting bot..."));
+            const isQrTimeout = reason === DisconnectReason.timedOut || reason === 408 ||
+                errorMsg.includes('QR refs attempts ended');
+            if (isQrTimeout) {
+                console.log(chalk.yellow('⏱️ QR expiré — nouveau QR dans 2s...'));
+                closeSocket();
                 reconnectAttempts = 0;
-                isStarting = false;
+                setTimeout(() => startBot(), 2000);
+                return;
+            }
+
+            if (reason === DisconnectReason.restartRequired) {
+                console.log(chalk.yellow("🔄 Restart required — reconnexion (post-QR)..."));
+                closeSocket();
+                reconnectAttempts = 0;
                 setTimeout(() => startBot(), 3000);
-            } else {
-                const errorRaw = JSON.stringify(lastDisconnect?.error || {});
+                return;
+            }
+
+            if (reason === DisconnectReason.connectionReplaced || reason === 440 || reason === 405) {
+                console.log(chalk.red("⚠️ Conflit session — autre instance active. Retry dans 15s..."));
+                closeSocket();
+                reconnectAttempts = Math.min(reconnectAttempts + 1, MAX_RECONNECT_ATTEMPTS);
+                setTimeout(() => startBot(), 15000);
+                return;
+            }
+
+            {
+
                 const errorStr = (lastDisconnect?.error?.message || '') + errorRaw;
                 const isDeviceRemoved = errorStr.includes('device_removed') ||
                                          errorStr.includes('conflict');
