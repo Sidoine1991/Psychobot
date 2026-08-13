@@ -173,6 +173,29 @@
         const titleDiv = document.getElementById('title');
         const instructionsDiv = document.getElementById('instructions');
         const newQrBtn = document.getElementById('newQrBtn');
+        let countdownTimer = null;
+
+        function showQr(data) {
+            spinner.style.display = 'none';
+            qrImage.style.display = 'block';
+            pairingCodeDiv.style.display = 'none';
+            newQrBtn.style.display = 'none';
+            statusDiv.style.color = '';
+            qrImage.src = data.qr;
+            const expires = data.expiresIn ?? 120;
+            statusDiv.innerHTML = `<span style="color: #4ade80">Scannez maintenant !</span> <small>(expire dans ${expires}s)</small>`;
+            if (countdownTimer) clearInterval(countdownTimer);
+            let left = expires;
+            countdownTimer = setInterval(() => {
+                left -= 1;
+                if (left <= 0) {
+                    clearInterval(countdownTimer);
+                    statusDiv.innerHTML = '<span style="color: #f59e0b">QR expiré — attente du nouveau code...</span>';
+                    return;
+                }
+                statusDiv.innerHTML = `<span style="color: #4ade80">Scannez maintenant !</span> <small>(expire dans ${left}s)</small>`;
+            }, 1000);
+        }
 
         newQrBtn.addEventListener('click', async () => {
             newQrBtn.disabled = true;
@@ -196,97 +219,87 @@
             }
         });
 
-        // Connect to WebSocket using current host
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = protocol + '//' + window.location.host;
 
-        console.log("Connecting to WS:", wsUrl);
-        const ws = new WebSocket(wsUrl);
+        function connectWS() {
+            console.log("Connecting to WS:", wsUrl);
+            const ws = new WebSocket(wsUrl);
 
-        ws.onopen = () => {
-            statusDiv.textContent = "Waiting for connection...";
-        };
+            ws.onopen = () => {
+                statusDiv.textContent = "En attente du QR code...";
+            };
 
-        ws.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
 
-                if (data.type === 'pairing_code') {
-                    spinner.style.display = 'none';
-                    qrImage.style.display = 'none';
-                    pairingCodeDiv.style.display = 'block';
-                    pairingCodeDiv.textContent = data.code;
-                    titleDiv.textContent = "Enter Pairing Code";
-                    instructionsDiv.textContent = `Open WhatsApp > Linked Devices > Link a Device with Phone Number\nEnter this code: ${data.code}`;
-                    statusDiv.innerHTML = '<span style="color: #4ade80">Enter the code on your phone!</span>';
+                    if (data.type === 'pairing_code') {
+                        spinner.style.display = 'none';
+                        qrImage.style.display = 'none';
+                        pairingCodeDiv.style.display = 'block';
+                        pairingCodeDiv.textContent = data.code;
+                        titleDiv.textContent = "Enter Pairing Code";
+                        instructionsDiv.textContent = `Open WhatsApp > Linked Devices > Link a Device with Phone Number\nEnter this code: ${data.code}`;
+                        statusDiv.innerHTML = '<span style="color: #4ade80">Enter the code on your phone!</span>';
+                    }
+
+                    if (data.type === 'qr') {
+                        showQr(data);
+                    }
+
+                    if (data.type === 'status') {
+                        statusDiv.textContent = data.message;
+                    }
+
+                    if (data.type === 'disconnected') {
+                        spinner.style.display = 'none';
+                        qrImage.style.display = 'none';
+                        pairingCodeDiv.style.display = 'none';
+                        statusDiv.style.color = '#ef4444';
+                        statusDiv.textContent = data.message || 'Bot not connected.';
+                        newQrBtn.style.display = 'inline-block';
+                    }
+
+                    if (data.type === 'connected') {
+                        if (countdownTimer) clearInterval(countdownTimer);
+                        spinner.style.display = 'none';
+                        qrImage.style.display = 'none';
+                        pairingCodeDiv.style.display = 'none';
+                        newQrBtn.style.display = 'none';
+                        statusDiv.style.color = '';
+                        statusDiv.innerHTML = `
+                            <div style="font-size: 3rem; margin-bottom:10px">✅</div>
+                            <div style="color: #4ade80; font-weight: bold">Connected Successfully!</div>
+                            <div>User: ${data.user}</div>
+                        `;
+                        setTimeout(() => window.location.href = '/', 3000);
+                    }
+
+                    if (data.type === 'error') {
+                        spinner.style.display = 'none';
+                        newQrBtn.style.display = 'inline-block';
+                        statusDiv.style.color = '#ef4444';
+                        statusDiv.textContent = "Error: " + data.message;
+                    }
+
+                } catch (e) {
+                    console.error("Error parsing message:", e);
                 }
+            };
 
-                if (data.type === 'qr') {
-                    spinner.style.display = 'none';
-                    qrImage.style.display = 'block';
-                    qrImage.src = data.qr;
-                    statusDiv.innerHTML = '<span style="color: #4ade80">Scan this code now!</span>';
-                }
+            ws.onclose = () => {
+                statusDiv.style.color = '#f59e0b';
+                statusDiv.textContent = "Reconnexion au serveur...";
+                setTimeout(connectWS, 2000);
+            };
 
-                if (data.type === 'status') {
-                    statusDiv.textContent = data.message;
-                }
+            ws.onerror = (err) => {
+                console.error("WS Error:", err);
+            };
+        }
 
-                if (data.type === 'disconnected') {
-                    spinner.style.display = 'none';
-                    qrImage.style.display = 'none';
-                    pairingCodeDiv.style.display = 'none';
-                    statusDiv.style.color = '#ef4444';
-                    statusDiv.textContent = data.message || 'Bot not connected.';
-                    newQrBtn.style.display = 'inline-block';
-                }
-
-                if (data.type === 'connected') {
-                    spinner.style.display = 'none';
-                    qrImage.style.display = 'none';
-                    pairingCodeDiv.style.display = 'none';
-                    newQrBtn.style.display = 'none';
-                    statusDiv.style.color = '';
-                    statusDiv.innerHTML = `
-                        <div style="font-size: 3rem; margin-bottom:10px">✅</div>
-                        <div style="color: #4ade80; font-weight: bold">Connected Successfully!</div>
-                        <div>User: ${data.user}</div>
-                    `;
-                    // Redirect after 3 seconds
-                    setTimeout(() => window.location.href = '/', 3000);
-                }
-
-                if (data.type === 'qr') {
-                    spinner.style.display = 'none';
-                    qrImage.style.display = 'block';
-                    newQrBtn.style.display = 'none';
-                    statusDiv.style.color = '';
-                    qrImage.src = data.qr;
-                    statusDiv.innerHTML = '<span style="color: #4ade80">Scan this code now!</span>';
-                }
-
-                if (data.type === 'error') {
-                    spinner.style.display = 'none';
-                    newQrBtn.style.display = 'inline-block';
-                    statusDiv.style.color = '#ef4444';
-                    statusDiv.textContent = "Error: " + data.message;
-                }
-
-            } catch (e) {
-                console.error("Error parsing message:", e);
-            }
-        };
-
-        ws.onclose = () => {
-            statusDiv.style.color = '#ef4444';
-            statusDiv.textContent = "Connection closed. Refresh to try again.";
-        };
-
-        ws.onerror = (err) => {
-            console.error("WS Error:", err);
-            statusDiv.style.color = '#ef4444';
-            statusDiv.textContent = "Connection error.";
-        };
+        connectWS();
     </script>
 </body>
 

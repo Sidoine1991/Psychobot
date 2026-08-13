@@ -424,6 +424,7 @@ let bootStabilized = false;
 let isStarting = false;
 let isConnected = false;
 let latestQR = null;
+let latestQRAt = 0;
 let lastConnectedAt = 0;
 let sock = null;
 let isPairingInProgress = false;
@@ -1321,15 +1322,15 @@ const broadcast = (data) => {
 
 wss.on('connection', (ws) => {
     console.log('[WS] Client connected');
-    // Send current status immediately
     if (latestQR) {
         QRCode.toDataURL(latestQR).then(url => {
-            ws.send(JSON.stringify({ type: 'qr', qr: url }));
+            const ageSec = latestQRAt ? Math.floor((Date.now() - latestQRAt) / 1000) : 0;
+            ws.send(JSON.stringify({ type: 'qr', qr: url, ageSec, expiresIn: Math.max(0, 120 - ageSec) }));
         });
     } else if (isConnected && sock?.user) {
         ws.send(JSON.stringify({ type: 'connected', user: sock.user.id.split(':')[0] }));
     } else {
-        ws.send(JSON.stringify({ type: 'disconnected', message: 'Bot not connected. Generate a new QR code below.' }));
+        ws.send(JSON.stringify({ type: 'status', message: 'Waiting for QR code...' }));
     }
 });
 
@@ -1533,11 +1534,12 @@ async function startBot() {
                 return;
             }
             latestQR = qr;
+            latestQRAt = Date.now();
             console.log(chalk.yellow(`[QR] New code generated.`));
             try {
                 const url = await QRCode.toDataURL(qr);
-                broadcast({ type: 'qr', qr: url });
-                broadcast({ type: 'status', message: 'Please scan the new QR Code' });
+                broadcast({ type: 'qr', qr: url, ageSec: 0, expiresIn: 120 });
+                broadcast({ type: 'status', message: 'Please scan the new QR Code (valid ~2 min)' });
             } catch (e) {
                 console.error('QR Encode Error', e);
             }
@@ -1577,7 +1579,16 @@ async function startBot() {
             const errorRaw = JSON.stringify(lastDisconnect?.error || {});
 
             const isQrTimeout = reason === DisconnectReason.timedOut || reason === 408 ||
-                errorMsg.includes('QR refs attempts ended');
+                reason === DisconnectReason.connectionClosed || reason === 428 ||
+                errorMsg.includes('QR refs attempts ended') ||
+                errorMsg.includes('Connection Closed');
+            if (isQrTimeout && !hasValidSession()) {
+                console.log(chalk.yellow(`⏱️ Connexion perdue pendant QR (${reason}) — nouveau QR dans 2s...`));
+                closeSocket();
+                reconnectAttempts = 0;
+                setTimeout(() => startBot(), 2000);
+                return;
+            }
             if (isQrTimeout) {
                 console.log(chalk.yellow('⏱️ QR expiré — nouveau QR dans 2s...'));
                 closeSocket();
@@ -1708,6 +1719,7 @@ async function startBot() {
             }
         } else if (connection === "open") {
             latestQR = null;
+            latestQRAt = 0;
             reconnectAttempts = 0;
             criticalErrorCount = 0; // Reset error counter on success
             isStarting = false;
