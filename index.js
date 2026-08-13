@@ -136,14 +136,21 @@ async function syncSessionToRender() {
         if (!fs.existsSync(credsPath)) return;
 
         const credsRaw = fs.readFileSync(credsPath, 'utf-8');
+        if (!credsRaw || credsRaw.length < 20) return;
 
-        // SAFETY: Always sync — Baileys manages registration internally
+        let creds;
+        try {
+            creds = JSON.parse(credsRaw);
+        } catch (e) {
+            return;
+        }
+        if (!creds?.me?.id) return;
 
         const sessionBase64 = Buffer.from(credsRaw).toString('base64');
+        if (!sessionBase64 || sessionBase64.length < 50) return;
 
         if (process.env.SESSION_DATA === sessionBase64) return;
 
-        // Method 1: Render API (if credentials available)
         const apiKey = process.env.RENDER_API_KEY;
         const serviceId = process.env.RENDER_SERVICE_ID;
         if (apiKey && serviceId) {
@@ -160,13 +167,36 @@ async function syncSessionToRender() {
             }
         }
 
-        // Method 2: Local backup file (always save as fallback)
         const backupPath = path.join(__dirname, 'session_backup.txt');
         fs.writeFileSync(backupPath, sessionBase64, 'utf-8');
         console.log(chalk.green("✅ [Session] Backup local sauvegardé (session_backup.txt)"));
     } catch (error) {
         console.error(chalk.red("❌ [Session] Échec sauvegarde:"), error.message);
     }
+}
+
+async function clearSessionOnRender() {
+    const apiKey = process.env.RENDER_API_KEY;
+    const serviceId = process.env.RENDER_SERVICE_ID;
+    if (!apiKey || !serviceId) return;
+    try {
+        await axios.put(`https://api.render.com/v1/services/${serviceId}/env-vars/SESSION_DATA`,
+            { value: '' },
+            { headers: { Authorization: `Bearer ${apiKey}`, "Accept": "application/json", "Content-Type": "application/json" } }
+        );
+        console.log(chalk.yellow('🗑️ [Render API] SESSION_DATA cleared'));
+    } catch (e) {
+        console.error(chalk.yellow('[Render API] Failed to clear SESSION_DATA:'), e.response?.data || e.message);
+    }
+}
+
+let sessionSyncTimer = null;
+function scheduleSessionSync() {
+    if (sessionSyncTimer) clearTimeout(sessionSyncTimer);
+    sessionSyncTimer = setTimeout(() => {
+        sessionSyncTimer = null;
+        syncSessionToRender().catch(e => console.error('[Session Sync]', e.message));
+    }, 8000);
 }
 
 // Backup entire session folder contents as base64 (for Render persistence)
@@ -1432,7 +1462,7 @@ async function startBot() {
 
     sock.ev.on("creds.update", async () => {
         await saveCreds();
-        // Delete skip flag as soon as fresh creds are saved — prevents clearing on reconnect
+        if (!isConnected) return;
         try {
             const skipFlag = path.join(AUTH_FOLDER, '.skip-session-data');
             if (fs.existsSync(skipFlag)) {
@@ -1441,22 +1471,15 @@ async function startBot() {
             }
         } catch (e) {}
         try {
-            // Backup complet: creds.json + toutes les clés (pre-keys, sessions, etc.)
             await backupFullSession();
-            // Aussi sauvegarder creds.json seul pour compatibilité
             const credsPath = path.join(AUTH_FOLDER, 'creds.json');
             if (fs.existsSync(credsPath)) {
                 const credsRaw = fs.readFileSync(credsPath, 'utf-8');
-
-                // SAFETY: Always backup — Baileys manages registration internally.
-                // The registered=false state is normal after QR scan until 515 reconnect completes.
-
-                const sessionB64 = Buffer.from(credsRaw).toString('base64');
-                // Backup fichier local
-                fs.writeFileSync(path.join(__dirname, 'session_backup.txt'), sessionB64);
+                if (credsRaw.length > 20) {
+                    fs.writeFileSync(path.join(__dirname, 'session_backup.txt'), Buffer.from(credsRaw).toString('base64'));
+                }
             }
-            // Sync Render API si configuré
-            if (sock?.user) await syncSessionToRender();
+            scheduleSessionSync();
         } catch (e) {
             console.error('[Session Backup]', e.message);
         }
@@ -1545,14 +1568,15 @@ async function startBot() {
             {
 
                 const errorStr = (lastDisconnect?.error?.message || '') + errorRaw;
-                const isDeviceRemoved = errorStr.includes('device_removed') ||
-                                         errorStr.includes('conflict');
-                const isNoiseHandshakeFailure = errorStr.includes('Connection Failure') ||
-                                                  errorRaw.includes('"location":"atn"') ||
-                                                  errorRaw.includes('decodeFrame');
+                const isDeviceRemoved = errorStr.includes('device_removed');
 
                 if (isDeviceRemoved) {
-                    console.log(chalk.red("⚠️ device_removed conflict — session is dead. Purging for fresh QR..."));
+                    const uptimeMs = lastConnectedAt ? Date.now() - lastConnectedAt : 0;
+                    console.log(chalk.red("⚠️ device_removed — WhatsApp a révoqué cette session."));
+                    if (uptimeMs > 0 && uptimeMs < 30000) {
+                        console.log(chalk.red.bold('🚨 CONFLIT PROBABLE: une autre instance du bot est connectée (local + Render ?).'));
+                        console.log(chalk.yellow('   → Arrêtez le bot local avant d\'utiliser Render.'));
+                    }
                     try {
                         fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
                         if (!fs.existsSync(AUTH_FOLDER)) fs.mkdirSync(AUTH_FOLDER, { recursive: true });
@@ -1562,16 +1586,20 @@ async function startBot() {
                             const p = path.join(__dirname, bp);
                             if (fs.existsSync(p)) fs.unlinkSync(p);
                         }
+                        await clearSessionOnRender();
                         console.log(chalk.green("✅ Session purged due to device_removed. Fresh QR on restart."));
                     } catch (e) {
                         console.error(chalk.red("❌ Failed to purge session:"), e.message);
                     }
-                    broadcast({ type: 'status', message: 'Device removed — nouveau QR requis.' });
+                    broadcast({ type: 'status', message: 'Device removed — stoppez le bot local puis rescanez le QR.' });
                     reconnectAttempts = 0;
                     isStarting = false;
                     isConnected = false;
-                    setTimeout(() => startBot(), 3000);
+                    setTimeout(() => startBot(), 10000);
                 } else if (reason === DisconnectReason.loggedOut || reason === 401) {
+                    const isNoiseHandshakeFailure = errorStr.includes('Connection Failure') ||
+                                                  errorRaw.includes('"location":"atn"') ||
+                                                  errorRaw.includes('decodeFrame');
                     console.log(chalk.red("🛑 401 received. Error details:"));
                     console.log(chalk.gray("  message:"), lastDisconnect?.error?.message);
                     console.log(chalk.gray("  raw:"), errorRaw);
@@ -1720,11 +1748,14 @@ async function startBot() {
 • !transcript - Transcrire audio
 
 ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨' : 'Type !help pour plus de details!'}`;
-            await sock.sendMessage(sock.user.id, { text: msgText });
 
-            // Critical: Force an immediate sync on first successful connection to ensure SESSION_DATA is populated on Render
-            await syncSessionToRender();
+            // Wait for connection to stabilize before welcome + sync (avoids device_removed race)
+            await delay(5000);
+            if (!isConnected || !sock?.user) return;
+
+            await sock.sendMessage(sock.user.id, { text: msgText });
             await backupFullSession();
+            scheduleSessionSync();
         }
     });
 
