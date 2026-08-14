@@ -20,11 +20,16 @@ require('dotenv').config();
 const { convertToOpus } = require('./src/lib/audioHelper');
 
 // New conversation state management
-const { setOwnerActive, isConversationActive, updateUserMessageType, shouldAutoReplyBasedOnActivity } = require('./src/db/conversationState');
+const { setOwnerActive, isConversationActive, updateUserMessageType } = require('./src/db/conversationState');
 const { detectMessageType } = require('./src/handlers/messageClassifier');
 const { getAutoReplyTemplate, formatReplyForWhatsApp } = require('./src/handlers/autoReplyTemplates');
 
-// Delayed reply system — wait 15 min before auto-replying, cancel if owner responds
+// Réponse immédiate possible quand le bot est connecté
+function isBotOnline() {
+    return isConnected && sock?.user?.id;
+}
+
+// Système de réponse différée (15 min) — conservé pour texte + notes vocales
 const DELAYED_REPLY_MS = 15 * 60 * 1000; // 15 minutes
 const pendingReplies = new Map(); // jid → { timer, msgData }
 
@@ -33,7 +38,7 @@ function cancelPendingReply(jid) {
     if (pending) {
         clearTimeout(pending.timer);
         pendingReplies.delete(jid);
-        console.log(`[DelayedReply] ⏹ Cancelled pending reply for ${jid} (owner responded)`);
+        console.log(`[DelayedReply] ⏹ Pending audio reply cancelled for ${jid}`);
     }
 }
 
@@ -44,10 +49,6 @@ function cancelAllPendingReplies(reason = 'shutdown') {
     }
     pendingReplies.clear();
     console.log(`[DelayedReply] ⏹ Cleared all pending replies (${reason})`);
-}
-
-function canSendDelayedReply() {
-    return isConnected && sock?.user?.id;
 }
 
 function cancelAllPendingRepliesForJid(jid) {
@@ -1724,7 +1725,6 @@ async function startBot() {
                         reconnectAttempts = 0;
                         isStarting = false;
                         isConnected = false;
-                        closeSocket();
                         setTimeout(() => startBot(), 5000);
                     } else if (isNoiseHandshakeFailure) {
                         console.log(chalk.yellow("⚠️ Noise handshake failure — clearing session for fresh QR..."));
@@ -1971,7 +1971,7 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
             lastOwnerActionTime = Date.now();
             // [NEW] Mark owner as active in conversation state
             setOwnerActive(remoteJid);
-            // Cancel any pending delayed reply — owner is handling this conversation
+            // Cancel any pending delayed audio reply — owner is handling this conversation
             cancelAllPendingRepliesForJid(remoteJid);
         }
 
@@ -2097,11 +2097,9 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
                 return; // Don't auto-reply
             }
 
-            // [NEW] Decide reply level based on owner activity
-            const autoReplyDecision = shouldAutoReplyBasedOnActivity(remoteJid);
-            console.log(`[AutoReply] Decision: ${autoReplyDecision} | MessageType: ${messageType}`);
+            console.log(`[AutoReply] Type: ${messageType}`);
 
-            // Handle specific message types - AUDIO PROCESSING (delayed 15 min)
+            // Audio / notes vocales — réponse DIFFÉRÉE de 15 min (système conservé)
             if (messageType === 'voice_note' || messageType === 'audio_document' || messageType === 'audio') {
                 if (pendingReplies.has(remoteJid)) {
                     console.log(`[DelayedReply] Already pending for ${remoteJid}, skipping audio duplicate`);
@@ -2118,12 +2116,12 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
                     ? msg.pushName.trim()
                     : '+' + msgSenderClean;
 
-                console.log(`[DelayedReply] ⏱ Scheduling audio reply in 15min for ${callerNameAudio} (${remoteJid})`);
+                console.log(`[DelayedReply] ⏱ Audio reply programmé dans 15 min pour ${callerNameAudio} (${remoteJid})`);
 
                 const timerAudio = setTimeout(async () => {
                     pendingReplies.delete(remoteJid);
 
-                    if (!canSendDelayedReply()) {
+                    if (!isBotOnline()) {
                         console.log(`[DelayedReply] Bot offline — skipping audio reply for ${remoteJid}`);
                         return;
                     }
@@ -2144,12 +2142,16 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
                             null
                         );
 
-                        await sock.sendMessage(remoteJid, {
-                            audio: fs.readFileSync(audioPath),
-                            mimetype: 'audio/ogg; codecs=opus',
-                            ptt: true,
-                        });
+                        // Réponse vocale si la synthèse a fonctionné
+                        if (audioPath) {
+                            await sock.sendMessage(remoteJid, {
+                                audio: fs.readFileSync(audioPath),
+                                mimetype: 'audio/ogg; codecs=opus',
+                                ptt: true,
+                            });
+                        }
 
+                        // Résumé texte : transcription + réponse IA (fidèle au contenu audio)
                         const textSummary = `🎙️ *Transcript*:\n_"${transcript}"_\n\n🤖 *Response*:\n${response}`;
                         await sock.sendMessage(remoteJid, { text: textSummary });
                         chatHistory.recordMessage(remoteJid, msg.pushName || null, 'bot', `[audio] ${response}`, 'audio');
@@ -2166,52 +2168,23 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
                 return;
             }
 
-            // Handle image/video (delayed 15 min)
+            // Handle image/video (ack immédiat — conversation vivante)
             if (messageType === 'image' || messageType === 'video') {
-                if (pendingReplies.has(remoteJid)) {
-                    console.log(`[DelayedReply] Already pending for ${remoteJid}, skipping media duplicate`);
-                    return;
+                try {
+                    const template = getAutoReplyTemplate('image_ack', messageType, '');
+                    const reply = formatReplyForWhatsApp(template, true);
+                    if (reply) {
+                        await sock.sendMessage(remoteJid, { text: reply });
+                        if (readReceiptsEnabled) await sock.readMessages([msg.key]);
+                    }
+                    console.log(`[AutoReply] ✓ Media ack immédiat envoyé à ${remoteJid}`);
+                } catch (err) {
+                    console.error('[AutoReply Media] Error:', err.message);
                 }
-
-                console.log(`[DelayedReply] ⏱ Scheduling media ack in 15min for ${remoteJid}`);
-
-                const timerMedia = setTimeout(async () => {
-                    pendingReplies.delete(remoteJid);
-
-                    if (!canSendDelayedReply()) {
-                        console.log(`[DelayedReply] Bot offline — skipping media ack for ${remoteJid}`);
-                        return;
-                    }
-                    if (isConversationActive(remoteJid)) {
-                        console.log(`[DelayedReply] Owner responded during media wait — aborting for ${remoteJid}`);
-                        return;
-                    }
-
-                    try {
-                        const template = getAutoReplyTemplate('image_ack', messageType, '');
-                        const reply = formatReplyForWhatsApp(template, true);
-                        if (reply) {
-                            await sock.sendMessage(remoteJid, { text: reply });
-                            if (readReceiptsEnabled) await sock.readMessages([msg.key]);
-                        }
-                        console.log(`[DelayedReply] ✓ Media ack sent after 15min delay`);
-                    } catch (err) {
-                        console.error('[DelayedReply Media] Error:', err.message);
-                    }
-                }, DELAYED_REPLY_MS);
-
-                pendingReplies.set(remoteJid, { timer: timerMedia, callerName: 'media', text: '[media]', remoteJid });
                 return;
             }
 
-            // Skip auto-reply if conversation not active AND decision is 'skip'
-            if (autoReplyDecision === 'skip') {
-                console.log(`[AutoReply] QUEUED: Owner absent < 60min, multiple messages pending`);
-                return;
-            }
-
-            // DELAYED REPLY: Schedule reply after 15 min — cancel if owner responds first
-            // If there's already a pending reply for this jid, don't stack another
+            // Messages texte — réponse DIFFÉRÉE de 15 min (système conservé)
             if (pendingReplies.has(remoteJid)) {
                 console.log(`[DelayedReply] Already pending for ${remoteJid}, skipping duplicate`);
                 return;
@@ -2221,12 +2194,12 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
                 ? msg.pushName.trim()
                 : '+' + msgSenderClean;
 
-            console.log(`[DelayedReply] ⏱ Scheduling reply in 15min for ${callerName} (${remoteJid})`);
+            console.log(`[DelayedReply] ⏱ Réponse texte programmée dans 15 min pour ${callerName} (${remoteJid})`);
 
             const timer = setTimeout(async () => {
                 pendingReplies.delete(remoteJid);
 
-                if (!canSendDelayedReply()) {
+                if (!isBotOnline()) {
                     console.log(`[DelayedReply] Bot offline — skipping reply for ${remoteJid}`);
                     return;
                 }
@@ -2235,16 +2208,15 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
                     return;
                 }
 
-                console.log(`[DelayedReply] ✓ 15min elapsed, sending reply to ${callerName} (${remoteJid})`);
                 try {
                     await sock.sendPresenceUpdate('composing', remoteJid);
 
                     const aiModule = require('./src/services/ai');
                     const history = aiModule.getConversationHistory(remoteJid);
                     const reply = await aiModule.getAIResponse(text, callerName, history, remoteJid);
-                    // SMART AUTO-REPLY: Change from generic 🤖 to context-aware with Sidoine absence notice
-                    const formattedReply = `📝 *Nota: Sidoine n'est pas là actuellement.*\n\n${reply}`;
-                    await sock.sendMessage(remoteJid, { text: formattedReply });
+
+                    const finalReply = `📝 *Nota: Sidoine n'est pas là actuellement.*\n\n${reply}`;
+                    await sock.sendMessage(remoteJid, { text: finalReply });
                     chatHistory.recordMessage(remoteJid, callerName, 'bot', reply);
 
                     if (readReceiptsEnabled) {
@@ -2252,10 +2224,10 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
                     }
                 } catch (err) {
                     console.error("[DelayedReply] AI Error:", err.message);
-                    if (!canSendDelayedReply()) return;
+                    if (!isBotOnline()) return;
 
                     try {
-                        const template = getAutoReplyTemplate(autoReplyDecision, messageType, text);
+                        const template = getAutoReplyTemplate('context_aware', messageType, text);
                         const reply = formatReplyForWhatsApp(template, true);
                         if (reply) {
                             await sock.sendMessage(remoteJid, { text: reply });
@@ -2267,6 +2239,7 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
             }, DELAYED_REPLY_MS);
 
             pendingReplies.set(remoteJid, { timer, callerName, text, remoteJid });
+            return;
         }
 
         // --- GROUP AUTO-REPLY (only on greetings) ---

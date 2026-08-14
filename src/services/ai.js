@@ -1,6 +1,7 @@
 const fetch = require('node-fetch');
 const fs = require('fs');
 const path = require('path');
+const subscriberMemory = require('./subscriberMemory');
 
 // Providers IA — utilisés dans l'ordre, le premier avec une clé valide répond
 const PROVIDERS = [
@@ -189,7 +190,7 @@ const SIDOINE_PROFILE = `PROFIL DE SIDOINE :
 
 Si quelqu'un demande un service (site web, analyse de données, dashboard, bot, IA, rapport) : confirme que _*Sidoine*_ peut le faire et propose de planifier un échange 📅`;
 
-function buildSystemPrompt(contactName, firstContact) {
+function buildSystemPrompt(contactName, firstContact, profileBlock = null) {
     const name = contactName ? `_*${contactName}*_` : null;
     const nameClause = name
         ? `La personne s'appelle ${name}. Utilise son prénom dans tes réponses — toujours en format WhatsApp gras+italique : _*${contactName}*_.`
@@ -206,6 +207,15 @@ RÈGLES ABSOLUES — JAMAIS d'exception :
 6. Prénom toujours en _*Prénom*_ si utilisé.
 7. Émojis avec parcimonie — seulement quand ils ajoutent quelque chose.
 
+CONVERSATION CHALEUREUSE ET HUMAINE (ton de base) :
+8. Sois vivant·e et chaleureux·se : varie tes formulations, ne commence jamais deux réponses de suite de la même façon, garde un ton naturel de discussion WhatsApp.
+9. Fais avancer la conversation : termine souvent par UNE question courte, une relance ou une remarque qui invite à répondre (sauf si le message est une demande d'action ou une commande — là, réponds directement).
+10. Utilise le PROFIL DE L'ABONNÉ s'il est fourni : référence ses centres d'intérêt, son lieu, ses projets quand c'est pertinent ("Et ton projet de X, ça avance ?"). Ne répète JAMAIS un fait qu'il vient de dire.
+11. Écoute et fais écho : si le message est émotionnel, reformule brièvement son ressenti avant de répondre (empathie d'abord, solution ensuite).
+12. Adapte-toi à l'énergie de la personne : si elle est décontractée, sois décontracté·e ; si elle est formelle, sois professionnel·le. Joue le jeu des blagues et du second degré quand c'est approprié.
+13. Longueur WhatsApp : 1-3 phrases pour une discussion légère ; plus détaillé uniquement si la question est technique ou émotionnellement importante.
+14. Pose des questions ouvertes (pas juste "oui/non") quand tu relances : "Qu'est-ce qui t'a fait penser à ça ?", "Tu en es où ?".
+
 FORMATAGE WhatsApp autorisé (use-en intelligemment) :
 - *texte* = gras
 - _texte_ = italique
@@ -213,6 +223,8 @@ FORMATAGE WhatsApp autorisé (use-en intelligemment) :
 - \`\`\`texte\`\`\` = monospace (pour du code ou des données)
 - > texte = citation/bloc
 - Listes : - item ou 1. item`;
+
+    const profileSection = profileBlock ? `\n${profileBlock}\n` : '';
 
     if (firstContact) {
         return `Tu es l'assistant virtuel personnel de Sidoine Kolaolé YEBADOKPO. Tu gères ses échanges WhatsApp quand il n'est pas disponible.
@@ -225,6 +237,7 @@ ${COMMON_RULES}
 - Ton : chaleureux, naturel, jamais robotique.
 - Tu n'es PAS Sidoine. Tu ES son assistant bienveillant.
 
+${profileSection}
 ${SIDOINE_PROFILE}`;
     }
 
@@ -241,6 +254,7 @@ ${COMMON_RULES}
 - Si tu ne connais pas la réponse : "Je ne sais pas 🤷" — c'est suffisant, pas d'excuse ni d'explication.
 - Si la question dépasse ton périmètre : "_*Sidoine*_ pourra mieux répondre à ça 🙏"
 
+${profileSection}
 ${SIDOINE_PROFILE}`;
 }
 
@@ -291,12 +305,18 @@ async function getAIResponse(prompt, contactName = null, conversationHistory = [
     console.log(`[AI Service] Prompt de "${contactName || 'inconnu'}": ${prompt.substring(0, 60)}`);
 
     const memKey = jid || contactName;
+
+    // Recharger la mémoire persistante (chatHistory) si elle n'existe plus en RAM
+    // (ex: redémarrage Render) — l'abonné ne "repasse" pas à zéro.
+    if (jid) ensureMemory(jid);
+
     const firstContact = isFirstContact(memKey);
     const hasHistory = conversationHistory && conversationHistory.length > 0;
+    const profileBlock = jid ? subscriberMemory.buildProfileBlock(jid) : null;
 
     try {
         const messages = [
-            { role: 'system', content: buildSystemPrompt(contactName, firstContact) }
+            { role: 'system', content: buildSystemPrompt(contactName, firstContact, profileBlock) }
         ];
 
         // Injecter l'historique (max 10 derniers messages = 5 échanges)
@@ -313,7 +333,13 @@ async function getAIResponse(prompt, contactName = null, conversationHistory = [
             }
         }
 
-        messages.push({ role: 'user', content: prompt });
+        // Éviter le doublon si le message courant est déjà dans l'historique rechargé
+        const historyList = conversationHistory.slice(-10);
+        const lastHist = historyList[historyList.length - 1];
+        const alreadyIncluded = hasHistory && lastHist && lastHist.role === 'user' && lastHist.content === prompt;
+        if (!alreadyIncluded) {
+            messages.push({ role: 'user', content: prompt });
+        }
 
         const aiReply = await callProvider(messages);
 
@@ -324,10 +350,19 @@ async function getAIResponse(prompt, contactName = null, conversationHistory = [
         if (memKey) {
             if (!conversationMemory.has(memKey)) conversationMemory.set(memKey, []);
             const mem = conversationMemory.get(memKey);
-            mem.push({ role: 'user', content: prompt });
-            mem.push({ role: 'assistant', content: aiReply });
+            const lastMem = mem[mem.length - 1];
+            const alreadyPaired = lastMem && lastMem.role === 'user' && lastMem.content === prompt;
+            if (alreadyPaired) {
+                mem.push({ role: 'assistant', content: aiReply });
+            } else {
+                mem.push({ role: 'user', content: prompt });
+                mem.push({ role: 'assistant', content: aiReply });
+            }
             // Conserver les 20 derniers messages (10 échanges)
             if (mem.length > 20) mem.splice(0, 2);
+
+            // Profil long-terme : stats + faits mémorisés, persistés sur disque
+            if (jid) subscriberMemory.recordExchange(jid, contactName, prompt);
         }
 
         console.log(`[AI Service] ✅ Réponse (${firstContact ? 'premier contact' : 'suite conversation'}): ${aiReply.substring(0, 80)}...`);
@@ -349,6 +384,19 @@ function getConversationHistory(jid) {
     return conversationMemory.get(jid) || [];
 }
 
+// Recharge la mémoire d'un contact depuis l'historique persistant (chatHistory)
+// si elle n'est plus en RAM — survit aux redémarrages Render.
+function ensureMemory(jid) {
+    if (!jid) return [];
+    if (conversationMemory.has(jid)) return conversationMemory.get(jid);
+    const persistent = subscriberMemory.getPersistentHistory(jid, 10);
+    if (persistent.length > 0) {
+        conversationMemory.set(jid, persistent);
+        console.log(`[AI] ✅ Mémoire rechargée pour ${jid} (${persistent.length} messages persistants)`);
+    }
+    return conversationMemory.get(jid) || [];
+}
+
 function clearConversationMemory(jid) {
     if (jid) {
         conversationMemory.delete(jid);
@@ -360,6 +408,7 @@ function clearConversationMemory(jid) {
 module.exports = {
     getAIResponse,
     getConversationHistory,
+    ensureMemory,
     clearConversationMemory,
     buildSystemPrompt,
     hasRecentConversation,

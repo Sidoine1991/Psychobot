@@ -33,10 +33,10 @@ class AWSTranscribeProcessor {
     /**
      * Transcribe audio file using AWS Transcribe
      * @param {string} audioFilePath - Path to audio file (OGG, WAV, MP3)
-     * @param {string} language - Language code (fr-FR, en-US)
+     * @param {string} language - Language code (fr-FR, en-US) ou 'auto' pour identification automatique
      * @returns {Promise<string>} Transcribed text
      */
-    async transcribeAudio(audioFilePath, language = 'fr-FR') {
+    async transcribeAudio(audioFilePath, language = 'auto') {
         console.log(`[AWS Transcribe] Processing: ${audioFilePath}`);
         console.log(`[AWS Transcribe] Language: ${language}`);
 
@@ -59,13 +59,19 @@ class AWSTranscribeProcessor {
                 }
             };
 
-            // Configure transcription
-            const command = new StartStreamTranscriptionCommand({
-                LanguageCode: language,
+            // Configure transcription — identification automatique de la langue par défaut
+            // (les notes en fon/anglais/yoruba ne sont plus déformées par un 'fr-FR' forcé)
+            const commandParams = {
                 MediaSampleRateHertz: 16000,
                 MediaEncoding: 'pcm',
                 AudioStream: audioStream()
-            });
+            };
+            if (language && language !== 'auto') {
+                commandParams.LanguageCode = language;
+            } else {
+                commandParams.IdentifyLanguage = true;
+            }
+            const command = new StartStreamTranscriptionCommand(commandParams);
 
             // Start streaming transcription
             const response = await this.client.send(command);
@@ -161,7 +167,7 @@ class AWSTranscribeProcessor {
  * Integration function for KolaBoT audioProcessor.js
  * Drop-in replacement for OpenAI Whisper transcription
  */
-async function transcribeAudioAWS(audioFilePath, language = 'fr-FR') {
+async function transcribeAudioAWS(audioFilePath, language = 'auto') {
     const processor = new AWSTranscribeProcessor();
 
     try {

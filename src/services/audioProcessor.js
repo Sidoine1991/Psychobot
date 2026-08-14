@@ -94,7 +94,10 @@ async function transcribeWithProvider(audioPath, provider) {
     if (provider === 'openai') {
         formData.append('file', audioBuffer, { filename: 'audio.wav' });
         formData.append('model', 'whisper-1');
-        formData.append('language', 'fr');
+        // Auto-détection de langue par Whisper (sinon les notes en fon/anglais/yoruba
+        // sont transcrites n'importe comment en français). Optionnel via WHISPER_LANGUAGE.
+        const whisperLang = process.env.WHISPER_LANGUAGE;
+        if (whisperLang) formData.append('language', whisperLang);
         const response = await axios.post('https://api.openai.com/v1/audio/transcriptions', formData, {
             headers: { ...formData.getHeaders(), 'Authorization': `Bearer ${OPENAI_API_KEY}` },
             timeout: 60000
@@ -105,7 +108,8 @@ async function transcribeWithProvider(audioPath, provider) {
     if (provider === 'nvidia') {
         formData.append('file', audioBuffer, { filename: 'audio.wav' });
         formData.append('model', 'nvidia/canary-1b');
-        formData.append('language', 'fr');
+        const whisperLang = process.env.WHISPER_LANGUAGE;
+        if (whisperLang) formData.append('language', whisperLang);
         const response = await axios.post(`${NVIDIA_NIM_BASE}/audio/transcriptions`, formData, {
             headers: { ...formData.getHeaders(), 'Authorization': `Bearer ${NVIDIA_NIM_API_KEY}` },
             timeout: 60000
@@ -125,7 +129,8 @@ async function transcribeAudioOpenAI(audioPath) {
     if (AWS_AVAILABLE) {
         try {
             console.log('[AudioProcessor] Trying AWS Transcribe (free tier)...');
-            const awsResult = await transcribeAudioAWS(audioPath, 'fr-FR');
+            // 'auto' → AWS identifie lui-même la langue (fr/en/fon/yoruba…)
+            const awsResult = await transcribeAudioAWS(audioPath, 'auto');
             if (awsResult.success) {
                 console.log(`[AudioProcessor] AWS Transcribed: "${awsResult.text}"`);
                 return awsResult.text;
@@ -263,14 +268,22 @@ async function processAudioMessage(audioMessage, downloadContentFromMessage, rem
         const history = aiModule.getConversationHistory(remoteJid);
         const aiResponse = await aiModule.getAIResponse(transcript, callerName, history, remoteJid);
 
-        // Step 5: Convert response to audio
-        // Detect language from transcript (simple heuristic: French if contains French words)
-        const frenchWords = ['le', 'la', 'de', 'et', 'un', 'une', 'est', 'je', 'tu', 'il', 'elle'];
-        const words = transcript.toLowerCase().split(/\s+/);
-        const hasFrench = words.some(w => frenchWords.includes(w));
-        const language = hasFrench ? 'fr' : 'en';
-
-        audioResponsePath = await textToSpeechGoogle(aiResponse, language);
+        // Step 5: Convert response to audio (optionnel — la réponse texte reste envoyée même si la TTS échoue)
+        // Détection de langue fiable (fr/en/fon) via subscriberMemory pour choisir la TTS
+        const subscriberMemory = require('./subscriberMemory');
+        const detectedLang = subscriberMemory.detectLanguage(transcript);
+        // Google TTS ne gère que certaines langues : fr/en OK, fon/yoruba → texte seul
+        const ttsLang = { fr: 'fr', en: 'en' }[detectedLang];
+        if (ttsLang) {
+            try {
+                audioResponsePath = await textToSpeechGoogle(aiResponse, ttsLang);
+            } catch (ttsErr) {
+                console.warn(`[AudioProcessor] TTS échouée (${ttsErr.message}) — réponse texte uniquement`);
+                audioResponsePath = null;
+            }
+        } else {
+            console.warn(`[AudioProcessor] Langue "${detectedLang}" non supportée par Google TTS — réponse texte uniquement`);
+        }
 
         console.log('[AudioProcessor] ✓ Complete pipeline successful');
         return {
