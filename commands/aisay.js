@@ -57,6 +57,7 @@ module.exports = {
         }
     },
     onMessage: async (sock, msg, text) => {
+        if (msg.key.remoteJid.endsWith('@g.us')) return false;
         const lowerText = text.toLowerCase().trim();
         const triggers = ["ai", "psychobot", "psycho bot"];
         const hasTrigger = triggers.some(t => lowerText === t || lowerText.startsWith(t + " "));

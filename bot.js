@@ -265,8 +265,10 @@ async function startBot() {
             // Auto Reaction
             await autoReactionHandler(msg, sock);
 
-            // Auto Response
-            await autoResponseHandler(msg, sock);
+            // Auto Response — JAMAIS dans les groupes WhatsApp
+            if (!msg.key.remoteJid.endsWith('@g.us')) {
+                await autoResponseHandler(msg, sock);
+            }
 
         } catch (err) {
             console.error('Error in messages.upsert', err);

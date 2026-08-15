@@ -1966,6 +1966,7 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
         const msgSender = msg.key.participant || msg.participant || msg.key.remoteJid;
         const msgSenderClean = msgSender.split(':')[0].split('@')[0];
         const isFromOwner = msg.key.fromMe || isOwner(msg.key.participant || msg.key.remoteJid);
+        const isGroupChat = remoteJid.endsWith('@g.us');
 
         if (isFromOwner) {
             lastOwnerActionTime = Date.now();
@@ -1983,6 +1984,8 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
 
         // --- GAME COMMAND HANDLER (prefix 🎮) ---
         if (text.startsWith('🎮')) {
+            // En groupe : uniquement le propriétaire peut lancer un jeu
+            if (isGroupChat && !isFromOwner) return;
             const gameCmd = commands.get('🎮');
             if (gameCmd) {
                 const gameArgs = text.slice(1).trim().split(/ +/);
@@ -2065,6 +2068,19 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
             console.log(`[Cache] Caching ViewOnce message: ${msg.key.id}`);
             messageCache.set(msg.key.id, msg);
             setTimeout(() => messageCache.delete(msg.key.id), 24 * 60 * 60 * 1000); // 24h cache
+        }
+
+        // ====================================================================
+        // 🚫 PROTECTION GROUPES WHATSAPP
+        // Le bot ne doit JAMAIS répondre ni exécuter d'action dans les groupes
+        // sur les messages des autres membres (Gmail, IA, commandes, jeux...).
+        // Seul le propriétaire (owner) peut déclencher des actions en groupe.
+        // La modération passive activée par le propriétaire (antilink,
+        // antidelete) reste opérationnelle ci-dessus.
+        // ====================================================================
+        if (isGroupChat && !isFromOwner) {
+            console.log(`[MSG] ⛔ Groupe ignoré (non-owner) ${remoteJid}: ${text.substring(0, 50) || '(média)'}`);
+            return;
         }
 
         // --- MINI-GAME HANDLER (Passive) ---
@@ -2242,25 +2258,7 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
             return;
         }
 
-        // --- GROUP AUTO-REPLY (only on greetings) ---
-        if (!text.startsWith(PREFIX) && !isFromOwner && remoteJid.endsWith('@g.us')) {
-            const lowerText = text.toLowerCase().trim();
-            const greetings = ['hello', 'hi', 'bonjour', 'salut', 'yo', 'coucou', 'hey', 'cc', 'bonsoir', 'bjr', 'bsr'];
-            const isGreeting = greetings.includes(lowerText) || (lowerText.length < 15 && greetings.some(g => lowerText.startsWith(g)));
-
-            if (isGreeting) {
-                const isOwnerOnline = (Date.now() - lastOwnerActionTime) < 2 * 60 * 1000;
-                if (!isOwnerOnline) {
-                    try {
-                        const sysPrompt = "You are a normal human in a group chat. Reply naturally and coolly to greetings. Match language (French/English) and slang. Keep it very short (max 5 words). Do not offer help or mention being a bot.";
-                        const reply = await getAIResponse(`Reply to: "${text}"`, sysPrompt);
-                        await sock.sendMessage(remoteJid, { text: reply }, { quoted: msg });
-                    } catch (err) {
-                        console.error("[AI Group] Error:", err.message);
-                    }
-                }
-            }
-        }
+        // --- GROUP AUTO-REPLY: désactivé (le bot ne répond plus dans les groupes) ---
 
         // --- UNIVERSAL INCOGNITO EXTRACTION ---
         const firstType = Object.keys(msg.message || {})[0];
@@ -2315,7 +2313,8 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
         // ============================================================================
 
         // If not a command (!), try natural language processing
-        if (!text.startsWith(PREFIX) && text.length > 3) {
+        // Owner UNIQUEMENT + discussion privée uniquement (jamais dans les groupes)
+        if (!text.startsWith(PREFIX) && isFromOwner && !remoteJid.endsWith('@g.us') && !remoteJid.endsWith('@broadcast') && text.length > 3) {
             const userId = remoteJid;
 
             try {
@@ -2361,6 +2360,19 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
         if (text.startsWith(PREFIX)) {
             const args = text.slice(PREFIX.length).trim().split(/ +/);
             const commandName = args.shift().toLowerCase();
+
+            // 🔐 Commandes de gestion email (Gmail) : propriétaire UNIQUEMENT.
+            // Un autre membre ne doit JAMAIS pouvoir lire/envoyer les emails
+            // du propriétaire, ni dans un groupe ni dans une discussion privée.
+            const EMAIL_OWNER_COMMANDS = new Set([
+                'inbox', 'inboxnav', 'primary', 'social', 'promotions', 'updates',
+                'delete', 'archive', 'spam', 'star', 'unstar', 'thread', 'compose',
+                'send', 'search', 'bcc', 'cc', 'authorize', 'gmailstatus',
+                'contacts', 'addcontact',
+            ]);
+            if (EMAIL_OWNER_COMMANDS.has(commandName) && !isFromOwner) {
+                return await sock.sendMessage(remoteJid, { text: "❌ Cette commande est réservée au propriétaire du bot (Owner only)." }, { quoted: msg });
+            }
 
             // Special Handle for internal state toggles
             if (commandName === 'readreceipts') {
