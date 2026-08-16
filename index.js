@@ -2313,8 +2313,14 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
         // ============================================================================
 
         // If not a command (!), try natural language processing
-        // Owner UNIQUEMENT + discussion privée uniquement (jamais dans les groupes)
-        if (!text.startsWith(PREFIX) && isFromOwner && !remoteJid.endsWith('@g.us') && !remoteJid.endsWith('@broadcast') && text.length > 3) {
+        // Owner UNIQUEMENT + SELF-CHAT UNIQUEMENT (note à soi). Le bot ne doit
+        // JAMAIS interpréter les messages que Sidoine envoie à un tiers :
+        // "arrete moi ça" dans une discussion privée avec un contact ne doit pas
+        // déclencher les commandes Gmail (mail, suppression, etc.).
+        const selfChatJid = sock.user?.id?.split(':')[0] + '@s.whatsapp.net';
+        const isSelfChat = remoteJid === selfChatJid;
+
+        if (!text.startsWith(PREFIX) && isFromOwner && isSelfChat && !remoteJid.endsWith('@g.us') && !remoteJid.endsWith('@broadcast') && text.length > 3) {
             const userId = remoteJid;
 
             try {
@@ -2370,8 +2376,16 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
                 'send', 'search', 'bcc', 'cc', 'authorize', 'gmailstatus',
                 'contacts', 'addcontact',
             ]);
-            if (EMAIL_OWNER_COMMANDS.has(commandName) && !isFromOwner) {
-                return await sock.sendMessage(remoteJid, { text: "❌ Cette commande est réservée au propriétaire du bot (Owner only)." }, { quoted: msg });
+            if (EMAIL_OWNER_COMMANDS.has(commandName)) {
+                if (!isFromOwner) {
+                    return await sock.sendMessage(remoteJid, { text: "❌ Cette commande est réservée au propriétaire du bot (Owner only)." }, { quoted: msg });
+                }
+                // Sécurité : les commandes email ne s'exécutent que dans la note à soi.
+                // Jamais dans un chat avec un tiers (ni groupe) — évite de répondre
+                // au sujet des emails / de fuiter l'inbox dans une autre discussion.
+                if (!isSelfChat) {
+                    return await sock.sendMessage(remoteJid, { text: "🔒 Les commandes email ne fonctionnent que dans votre note à vous-même (self-chat)." }, { quoted: msg });
+                }
             }
 
             // Special Handle for internal state toggles

@@ -164,31 +164,50 @@ Message: "Ouvre le 3ème"
     /**
      * Quick check if message looks like a Gmail command
      * @param {string} message - User message
+     * @param {boolean} hasEmailContext - True if an inbox/email session is already open (lastEmails présent)
      * @returns {boolean} True if likely a Gmail command
      */
-    looksLikeGmailCommand(message) {
-        const gmailKeywords = [
-            'email', 'mail', 'inbox', 'message',
-            'supprime', 'archive', 'envoie', 'envoi',
-            'page', 'suivant', 'précédent', 'prochain',
-            'étoile', 'spam', 'corbeille',
-            'principal', 'promotion', 'social',
-            'ça', 'cet email', 'ce message',
-            'montre', 'affiche', 'voir', 'lire', 'ouvre',
-            'rentre', 'entre', 'clique', 'ouvrir',
-            'recherche', 'cherche', 'offre d\'emploi'
-        ];
-
+    looksLikeGmailCommand(message, hasEmailContext = false) {
         const lowerMessage = message.toLowerCase();
 
-        // Check keywords
-        if (gmailKeywords.some(keyword => lowerMessage.includes(keyword))) {
+        // Mots-clés FORTS : exclusivement liés à la gestion d'emails.
+        // Aucun mot générique ("ça", "voir", "page", "message"...) — sinon le bot
+        // déclencherait une commande email sur "arrete moi ça" ou "RDV à 10h".
+        const strongKeywords = [
+            'email', 'mail', 'inbox', 'gmail',
+            'supprime', 'supprimer', 'archive', 'archiver', 'spam', 'corbeille',
+            'étoile', 'etoile', 'star',
+            'envoie', 'envoi', 'envoyer', 'compose',
+            'répondre', 'repondre', 'réponse', 'reponse',
+            'principal', 'promotion', 'promotions', 'social',
+            'cet email', 'ce message',
+            'offre d\'emploi', 'offres d\'emploi'
+        ];
+
+        if (strongKeywords.some(keyword => lowerMessage.includes(keyword))) {
             return true;
         }
 
-        // Check for numeric references: "9", "email 9", "le 9", "numero 9"
-        if (/\d+/.test(message)) {
-            return true;
+        // Mots-clés FAIBLES (navigation/action génériques) : valides UNIQUEMENT si
+        // une session email est déjà ouverte (ex: "Page suivante" après "Montre mes emails").
+        // Sans contexte email, ils ne déclenchent jamais de commande.
+        if (hasEmailContext) {
+            const weakKeywords = [
+                'ça', 'page', 'suivant', 'précédent', 'prochain',
+                'montre', 'affiche', 'voir', 'lire', 'ouvre', 'ouvrir',
+                'rentre', 'entre', 'clique', 'recherche', 'cherche', 'message',
+                'dernier', 'premier'
+            ];
+
+            if (weakKeywords.some(keyword => lowerMessage.includes(keyword))) {
+                return true;
+            }
+
+            // Références numériques : "email 9", "le 9", "la 3", "numéro 5", "le 3ème", "n° 2"
+            // Un chiffre isolé ("RDV à 10h") ne déclenche JAMAIS une commande email.
+            if (/\b(le|la|num[eé]ro|n°)\s*[0-9]+\b|\bemail\s*[0-9]+\b/.test(lowerMessage)) {
+                return true;
+            }
         }
 
         return false;

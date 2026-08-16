@@ -38,17 +38,20 @@ class CommandExecutor {
      * @returns {Object} {executed: boolean, intent: string, response: string}
      */
     async processMessage(userMessage, messageContext, userId) {
+        // Get user context
+        const context = contextManager.getSummaryForAI(userId);
+        const hasEmailContext = (context.emailCount > 0) || !!context.lastEmailId;
+
         // Quick filter: does it look like a Gmail command?
-        if (!intentAnalyzer.looksLikeGmailCommand(userMessage)) {
+        // Les mots génériques ("ça", "page suivante", "voir"...") ne sont reconnus
+        // que si une session email est déjà ouverte.
+        if (!intentAnalyzer.looksLikeGmailCommand(userMessage, hasEmailContext)) {
             return {
                 executed: false,
                 intent: 'none',
                 reason: 'No Gmail keywords detected'
             };
         }
-
-        // Get user context
-        const context = contextManager.getSummaryForAI(userId);
 
         // Analyze intent with AI
         console.log('[CommandExecutor] Analyzing intent for:', userMessage);
