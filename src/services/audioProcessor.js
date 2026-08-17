@@ -54,6 +54,14 @@ async function downloadAudio(audioMessage, downloadContentFromMessage) {
             buffer = Buffer.concat([buffer, chunk]);
         }
 
+        if (buffer.length === 0) {
+            throw new Error('Audio buffer vide — déchiffrement WhatsApp échoué (Bad MAC)');
+        }
+
+        if (buffer.length < 100) {
+            console.warn(`[AudioProcessor] Audio anormalement petit (${buffer.length} bytes) — possible corruption`);
+        }
+
         const tempDir = os.tmpdir();
         const audioPath = path.join(tempDir, `audio_${Date.now()}.ogg`);
         fs.writeFileSync(audioPath, buffer);
@@ -256,8 +264,21 @@ async function processAudioMessage(audioMessage, downloadContentFromMessage, rem
     let audioResponsePath = null;
 
     try {
-        // Step 1: Download audio
-        downloadedPath = await downloadAudio(audioMessage, downloadContentFromMessage);
+        // Step 1: Download audio (avec retry si déchiffrement échoue)
+        const MAX_RETRIES = 3;
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                downloadedPath = await downloadAudio(audioMessage, downloadContentFromMessage);
+                break; // success
+            } catch (dlErr) {
+                console.warn(`[AudioProcessor] Download attempt ${attempt}/${MAX_RETRIES} failed: ${dlErr.message}`);
+                if (attempt < MAX_RETRIES) {
+                    await new Promise(r => setTimeout(r, 3000 * attempt)); // backoff: 3s, 6s, 9s
+                } else {
+                    throw dlErr;
+                }
+            }
+        }
 
         // Step 2: Convert OGG → WAV
         wavPath = await convertToWav(downloadedPath);
