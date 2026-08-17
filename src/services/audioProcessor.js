@@ -18,6 +18,16 @@ ffmpeg.setFfmpegPath(ffmpegPath);
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const NVIDIA_NIM_API_KEY = process.env.NVIDIA_NIM_API_KEY;
+
+// Validate OpenAI API key format (reject placeholder values)
+function isValidOpenAIKey(key) {
+    if (!key) return false;
+    // Reject known placeholder values
+    const placeholders = ['fallback_minimal', 'sk-your', 'sk-xxx', 'sk-placeholder', 'your-key-here'];
+    if (placeholders.some(p => key.toLowerCase().includes(p))) return false;
+    // Valid OpenAI keys start with 'sk-' and are at least 20 chars
+    return key.startsWith('sk-') && key.length >= 20;
+}
 const NVIDIA_NIM_BASE = 'https://integrate.api.nvidia.com/v1';
 const NVIDIA_NIM_MODEL = process.env.NVIDIA_NIM_MODEL || 'meta/llama-3.3-70b-instruct';
 
@@ -143,10 +153,12 @@ async function transcribeAudioOpenAI(audioPath) {
 
     // Fallback to OpenAI only (NVIDIA doesn't support audio transcription)
     const providers = [];
-    if (OPENAI_API_KEY) providers.push('openai');
+    if (isValidOpenAIKey(OPENAI_API_KEY)) providers.push('openai');
 
     if (providers.length === 0) {
-        throw new Error('No transcription service available (AWS or OpenAI required)');
+        const hasValidKey = isValidOpenAIKey(OPENAI_API_KEY);
+        const hasAWS = !!AWS_AVAILABLE;
+        throw new Error(`No transcription service available (AWS: ${hasAWS}, OpenAI key valid: ${hasValidKey})`);
     }
 
     for (const provider of providers) {
@@ -259,7 +271,8 @@ async function processAudioMessage(audioMessage, downloadContentFromMessage, rem
             transcript = await transcribeAudioLocal(wavPath);
         }
 
-        if (!transcript || transcript.includes('placeholder')) {
+        if (!transcript || transcript.includes('placeholder') || transcript.includes('local fallback not available') || transcript.includes('local transcription not yet')) {
+            console.error(`[AudioProcessor] Transcription invalide: "${transcript}"`);
             throw new Error('Transcription failed');
         }
 
@@ -302,7 +315,8 @@ async function processAudioMessage(audioMessage, downloadContentFromMessage, rem
             }
         });
 
-        throw error;
+        // Return a user-friendly error
+        throw new Error(`Transcription impossible: ${error.message}. Vérifiez vos clés API (OPENAI_API_KEY) dans Render.`);
     }
 }
 

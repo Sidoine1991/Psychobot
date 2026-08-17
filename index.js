@@ -2177,6 +2177,9 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
                         console.log(`[DelayedReply] ✓ Audio response sent after 15min delay`);
                     } catch (err) {
                         console.error('[DelayedReply Audio] Error:', err.message);
+                        try {
+                            await sock.sendMessage(remoteJid, { text: `❌ Erreur transcription audio: ${err.message}` });
+                        } catch (e) { /* ignore send error */ }
                     }
                 }, DELAYED_REPLY_MS);
 
