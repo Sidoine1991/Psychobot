@@ -1,11 +1,12 @@
 const ffmpeg = require('fluent-ffmpeg');
-const ffmpegPath = require('ffmpeg-static');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const axios = require('axios');
 
-ffmpeg.setFfmpegPath(ffmpegPath);
+// Use system FFmpeg in Docker (Render), ffmpeg-static locally
+const ffmpegBinary = process.env.RENDER ? '/usr/bin/ffmpeg' : require('ffmpeg-static');
+ffmpeg.setFfmpegPath(ffmpegBinary);
 
 /**
  * Downloads audio from a URL and converts it to OGG Opus (WhatsApp Voice Note format).

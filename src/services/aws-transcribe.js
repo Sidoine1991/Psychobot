@@ -106,8 +106,9 @@ class AWSTranscribeProcessor {
      */
     async convertToPCM(audioBuffer, originalPath) {
         const ffmpeg = require('fluent-ffmpeg');
-        const ffmpegPath = require('ffmpeg-static');
-        ffmpeg.setFfmpegPath(ffmpegPath);
+        // Use system FFmpeg in Docker (Render), ffmpeg-static locally
+        const ffmpegBinary = process.env.RENDER ? '/usr/bin/ffmpeg' : require('ffmpeg-static');
+        ffmpeg.setFfmpegPath(ffmpegBinary);
 
         const tempPCM = originalPath.replace(/\.\w+$/, '_pcm.wav');
 

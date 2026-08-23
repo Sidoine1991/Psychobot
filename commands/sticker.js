@@ -1,12 +1,13 @@
 // commands/sticker.js
 const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
 const ffmpeg = require('fluent-ffmpeg');
-const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 const fs = require('fs');
 const path = require('path');
 const log = require('../logger')(module);
 
-ffmpeg.setFfmpegPath(ffmpegPath);
+// Use system FFmpeg in Docker (Render), @ffmpeg-installer/ffmpeg locally
+const ffmpegBinary = process.env.RENDER ? '/usr/bin/ffmpeg' : require('@ffmpeg-installer/ffmpeg').path;
+ffmpeg.setFfmpegPath(ffmpegBinary);
 
 module.exports = {
     name: 'sticker',
