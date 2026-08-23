@@ -1,22 +1,21 @@
 /**
  * Audio Processor Service for KolaBoT
- * Handles: Download → Transcribe → Generate AI Response → Convert to Audio → Send
+ * Handles: Download → Transcribe (Groq/OpenAI direct, no FFmpeg) → AI Response → TTS → Send
  */
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const ffmpeg = require('fluent-ffmpeg');
-const ffmpegPath = require('ffmpeg-static');
+const FormData = require('form-data');
 const googleTTS = require('google-tts-api');
 const { convertToOpus } = require('../lib/audioHelper');
 
 // AWS Transcribe integration (uses existing AWS Bedrock credentials)
 const { transcribeAudioAWS } = require('./aws-transcribe');
 
-ffmpeg.setFfmpegPath(ffmpegPath);
-
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
+const GROQ_TRANSCRIBE_MODEL = process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo';
 const NVIDIA_NIM_API_KEY = process.env.NVIDIA_NIM_API_KEY;
 
 // Validate OpenAI API key format (reject placeholder values)
@@ -28,92 +27,29 @@ function isValidOpenAIKey(key) {
     // Valid OpenAI keys start with 'sk-' and are at least 20 chars
     return key.startsWith('sk-') && key.length >= 20;
 }
+
+// Validate Groq API key format (gsk_...)
+function isValidTranscriptionKey(key) {
+    if (!key) return false;
+    const placeholders = ['placeholder', 'your-key-here', 'xxx'];
+    if (placeholders.some(p => key.toLowerCase().includes(p))) return false;
+    return key.startsWith('gsk_') && key.length >= 20;
+}
 const NVIDIA_NIM_BASE = 'https://integrate.api.nvidia.com/v1';
 const NVIDIA_NIM_MODEL = process.env.NVIDIA_NIM_MODEL || 'meta/llama-3.3-70b-instruct';
 
-if (!NVIDIA_NIM_API_KEY) {
-    console.warn('[AudioProcessor] NVIDIA_NIM_API_KEY manquante — la synthèse audio ne fonctionnera pas.');
-}
-
-// Check if AWS credentials are available
-const AWS_AVAILABLE = process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY;
-
 /**
- * Download audio from WhatsApp and save locally
- * @param {Object} audioMessage - audioMessage object from Baileys
- * @param {Function} downloadContentFromMessage - Baileys function
- * @returns {Promise<string>} - Path to downloaded audio file
- */
-async function downloadAudio(audioMessage, downloadContentFromMessage) {
-    try {
-        console.log('[AudioProcessor] Downloading audio...');
-        const stream = await downloadContentFromMessage(audioMessage, 'audio');
-        let buffer = Buffer.from([]);
-
-        for await (const chunk of stream) {
-            buffer = Buffer.concat([buffer, chunk]);
-        }
-
-        if (buffer.length === 0) {
-            throw new Error('Audio buffer vide — déchiffrement WhatsApp échoué (Bad MAC)');
-        }
-
-        if (buffer.length < 100) {
-            console.warn(`[AudioProcessor] Audio anormalement petit (${buffer.length} bytes) — possible corruption`);
-        }
-
-        const tempDir = os.tmpdir();
-        const audioPath = path.join(tempDir, `audio_${Date.now()}.ogg`);
-        fs.writeFileSync(audioPath, buffer);
-        console.log(`[AudioProcessor] Audio downloaded: ${audioPath} (${buffer.length} bytes)`);
-
-        return audioPath;
-    } catch (error) {
-        console.error('[AudioProcessor] Download error:', error.message);
-        throw error;
-    }
-}
-
-/**
- * Convert OGG Opus audio to WAV for transcription APIs
- * @param {string} inputPath - Path to OGG file
- * @returns {Promise<string>} - Path to WAV file
- */
-async function convertToWav(inputPath) {
-    return new Promise((resolve, reject) => {
-        const outputPath = inputPath.replace('.ogg', '.wav');
-
-        ffmpeg(inputPath)
-            .toFormat('wav')
-            .audioCodec('pcm_s16le')
-            .audioFrequency(16000)
-            .on('end', () => {
-                console.log(`[AudioProcessor] Converted to WAV: ${outputPath}`);
-                resolve(outputPath);
-            })
-            .on('error', (err) => {
-                console.error('[AudioProcessor] FFmpeg conversion error:', err.message);
-                reject(err);
-            })
-            .save(outputPath);
-    });
-}
-
-/**
- * Transcribe audio using OpenAI Whisper API
- * @param {string} audioPath - Path to audio file (WAV format)
+ * Transcribe audio using Groq/OpenAI Whisper API (accepts OGG/Opus directly)
+ * @param {string} audioPath - Path to audio file (OGG format)
  * @returns {Promise<string>} - Transcribed text
  */
 async function transcribeWithProvider(audioPath, provider) {
-    const FormData = require('form-data');
     const audioBuffer = fs.readFileSync(audioPath);
     const formData = new FormData();
 
     if (provider === 'openai') {
-        formData.append('file', audioBuffer, { filename: 'audio.wav' });
+        formData.append('file', audioBuffer, { filename: 'audio.ogg' });
         formData.append('model', 'whisper-1');
-        // Auto-détection de langue par Whisper (sinon les notes en fon/anglais/yoruba
-        // sont transcrites n'importe comment en français). Optionnel via WHISPER_LANGUAGE.
         const whisperLang = process.env.WHISPER_LANGUAGE;
         if (whisperLang) formData.append('language', whisperLang);
         const response = await axios.post('https://api.openai.com/v1/audio/transcriptions', formData, {
@@ -123,8 +59,21 @@ async function transcribeWithProvider(audioPath, provider) {
         return response.data.text.trim();
     }
 
+    if (provider === 'groq') {
+        formData.append('file', audioBuffer, { filename: 'audio.ogg' });
+        formData.append('model', GROQ_TRANSCRIBE_MODEL);
+        formData.append('response_format', 'json');
+        const whisperLang = process.env.WHISPER_LANGUAGE;
+        if (whisperLang) formData.append('language', whisperLang);
+        const response = await axios.post('https://api.groq.com/openai/v1/audio/transcriptions', formData, {
+            headers: { ...formData.getHeaders(), 'Authorization': `Bearer ${GROQ_API_KEY}` },
+            timeout: 60000
+        });
+        return response.data.text.trim();
+    }
+
     if (provider === 'nvidia') {
-        formData.append('file', audioBuffer, { filename: 'audio.wav' });
+        formData.append('file', audioBuffer, { filename: 'audio.ogg' });
         formData.append('model', 'nvidia/canary-1b');
         const whisperLang = process.env.WHISPER_LANGUAGE;
         if (whisperLang) formData.append('language', whisperLang);
@@ -140,47 +89,64 @@ async function transcribeWithProvider(audioPath, provider) {
 
 /**
  * Main transcription function with AWS Transcribe priority
- * Tries AWS first (free tier), then OpenAI/NVIDIA as fallback
+ * Tries AWS first (free tier), then Groq, then OpenAI as fallback
  */
 async function transcribeAudioOpenAI(audioPath) {
+    const failures = [];
+
     // Try AWS Transcribe first (free tier available)
     if (AWS_AVAILABLE) {
         try {
             console.log('[AudioProcessor] Trying AWS Transcribe (free tier)...');
             // 'auto' → AWS identifie lui-même la langue (fr/en/fon/yoruba…)
             const awsResult = await transcribeAudioAWS(audioPath, 'auto');
-            if (awsResult.success) {
+            if (awsResult.success && awsResult.text && awsResult.text.trim()) {
                 console.log(`[AudioProcessor] AWS Transcribed: "${awsResult.text}"`);
-                return awsResult.text;
+                return awsResult.text.trim();
             }
-            console.warn(`[AudioProcessor] AWS failed: ${awsResult.error}`);
+            const reason = awsResult.success ? 'transcript vide' : awsResult.error;
+            console.warn(`[AudioProcessor] AWS failed: ${reason}`);
+            failures.push(`aws: ${reason}`);
         } catch (error) {
             console.warn(`[AudioProcessor] AWS Transcribe error: ${error.message} — trying fallback...`);
+            failures.push(`aws: ${error.message}`);
         }
     }
 
-    // Fallback to OpenAI only (NVIDIA doesn't support audio transcription)
+    // Fallback API providers (Groq d'abord : clé active et moins chère, puis OpenAI)
     const providers = [];
+    if (isValidTranscriptionKey(GROQ_API_KEY)) providers.push('groq');
     if (isValidOpenAIKey(OPENAI_API_KEY)) providers.push('openai');
 
     if (providers.length === 0) {
         const hasValidKey = isValidOpenAIKey(OPENAI_API_KEY);
         const hasAWS = !!AWS_AVAILABLE;
-        throw new Error(`No transcription service available (AWS: ${hasAWS}, OpenAI key valid: ${hasValidKey})`);
+        throw new Error(
+            `No transcription service available (AWS: ${hasAWS}, Groq key valid: ${!!GROQ_API_KEY}, OpenAI key valid: ${hasValidKey})`
+        );
     }
 
     for (const provider of providers) {
         try {
             console.log(`[AudioProcessor] Transcribing with ${provider}...`);
             const text = await transcribeWithProvider(audioPath, provider);
+            if (!text || !text.trim()) {
+                console.warn(`[AudioProcessor] ${provider} returned empty transcript — trying next...`);
+                failures.push(`${provider}: transcript vide`);
+                continue;
+            }
             console.log(`[AudioProcessor] Transcribed (${provider}): "${text}"`);
             return text;
         } catch (error) {
-            console.warn(`[AudioProcessor] ${provider} failed: ${error.response?.status || error.message} — trying next...`);
+            const detail = error.response
+                ? `${error.response.status} ${(typeof error.response.data === 'object' ? JSON.stringify(error.response.data).substring(0, 200) : String(error.response.data).substring(0, 200))}`
+                : error.message;
+            console.warn(`[AudioProcessor] ${provider} failed: ${detail} — trying next...`);
+            failures.push(`${provider}: ${detail}`);
         }
     }
 
-    throw new Error('All transcription providers failed');
+    throw new Error(`All transcription providers failed — ${failures.join(' | ')}`);
 }
 
 /**
@@ -260,7 +226,6 @@ async function textToSpeechGoogle(text, language = 'fr') {
  */
 async function processAudioMessage(audioMessage, downloadContentFromMessage, remoteJid, callerName, getAIResponseFunc) {
     let downloadedPath = null;
-    let wavPath = null;
     let audioResponsePath = null;
 
     try {
@@ -280,16 +245,13 @@ async function processAudioMessage(audioMessage, downloadContentFromMessage, rem
             }
         }
 
-        // Step 2: Convert OGG → WAV
-        wavPath = await convertToWav(downloadedPath);
-
-        // Step 3: Transcribe
+        // Step 2: Transcribe directly from OGG (Groq/OpenAI accept OGG/Opus natively)
         let transcript = '';
         try {
-            transcript = await transcribeAudioOpenAI(wavPath);
+            transcript = await transcribeAudioOpenAI(downloadedPath);
         } catch (err) {
-            console.warn('[AudioProcessor] OpenAI Whisper failed, trying local...');
-            transcript = await transcribeAudioLocal(wavPath);
+            console.warn('[AudioProcessor] Transcription failed, trying local...');
+            transcript = await transcribeAudioLocal(downloadedPath);
         }
 
         if (!transcript || transcript.includes('placeholder') || transcript.includes('local fallback not available') || transcript.includes('local transcription not yet')) {
@@ -297,12 +259,12 @@ async function processAudioMessage(audioMessage, downloadContentFromMessage, rem
             throw new Error('Transcription failed');
         }
 
-        // Step 4: Get AI response
+        // Step 3: Get AI response
         const aiModule = require('./ai');
         const history = aiModule.getConversationHistory(remoteJid);
         const aiResponse = await aiModule.getAIResponse(transcript, callerName, history, remoteJid);
 
-        // Step 5: Convert response to audio (optionnel — la réponse texte reste envoyée même si la TTS échoue)
+        // Step 4: Convert response to audio (optionnel — la réponse texte reste envoyée même si la TTS échoue)
         // Détection de langue fiable (fr/en/fon) via subscriberMemory pour choisir la TTS
         const subscriberMemory = require('./subscriberMemory');
         const detectedLang = subscriberMemory.detectLanguage(transcript);
@@ -330,14 +292,14 @@ async function processAudioMessage(audioMessage, downloadContentFromMessage, rem
         console.error('[AudioProcessor] Pipeline error:', error.message);
 
         // Cleanup on error
-        [downloadedPath, wavPath, audioResponsePath].forEach(p => {
+        [downloadedPath, audioResponsePath].forEach(p => {
             if (p && fs.existsSync(p)) {
                 try { fs.unlinkSync(p); } catch (e) { }
             }
         });
 
         // Return a user-friendly error
-        throw new Error(`Transcription impossible: ${error.message}. Vérifiez vos clés API (OPENAI_API_KEY) dans Render.`);
+        throw new Error(`Transcription impossible: ${error.message}. Vérifiez les clés de transcription (GROQ_API_KEY / OPENAI_API_KEY / AWS) dans Render.`);
     }
 }
 
@@ -360,7 +322,6 @@ function cleanup(paths = []) {
 
 module.exports = {
     downloadAudio,
-    convertToWav,
     transcribeAudioOpenAI,
     transcribeAudioLocal,
     getAIResponseForAudio,
