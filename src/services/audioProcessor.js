@@ -38,6 +38,9 @@ function isValidTranscriptionKey(key) {
 const NVIDIA_NIM_BASE = 'https://integrate.api.nvidia.com/v1';
 const NVIDIA_NIM_MODEL = process.env.NVIDIA_NIM_MODEL || 'meta/llama-3.3-70b-instruct';
 
+// Check if AWS credentials are available
+const AWS_AVAILABLE = !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY);
+
 /**
  * Transcribe audio using Groq/OpenAI Whisper API (accepts OGG/Opus directly)
  * @param {string} audioPath - Path to audio file (OGG format)
@@ -211,6 +214,42 @@ async function textToSpeechGoogle(text, language = 'fr') {
         return audioPath;
     } catch (error) {
         console.error('[AudioProcessor] Google TTS error:', error.message);
+        throw error;
+    }
+}
+
+/**
+ * Download audio from WhatsApp and save locally
+ * @param {Object} audioMessage - audioMessage object from Baileys
+ * @param {Function} downloadContentFromMessage - Baileys download function
+ * @returns {Promise<string>} - Path to downloaded audio file
+ */
+async function downloadAudio(audioMessage, downloadContentFromMessage) {
+    try {
+        console.log('[AudioProcessor] Downloading audio...');
+        const stream = await downloadContentFromMessage(audioMessage, 'audio');
+        let buffer = Buffer.from([]);
+
+        for await (const chunk of stream) {
+            buffer = Buffer.concat([buffer, chunk]);
+        }
+
+        if (buffer.length === 0) {
+            throw new Error('Audio buffer vide — déchiffrement WhatsApp échoué (Bad MAC)');
+        }
+
+        if (buffer.length < 100) {
+            console.warn(`[AudioProcessor] Audio anormalement petit (${buffer.length} bytes) — possible corruption`);
+        }
+
+        const tempDir = os.tmpdir();
+        const audioPath = path.join(tempDir, `audio_${Date.now()}.ogg`);
+        fs.writeFileSync(audioPath, buffer);
+        console.log(`[AudioProcessor] Audio downloaded: ${audioPath} (${buffer.length} bytes)`);
+
+        return audioPath;
+    } catch (error) {
+        console.error('[AudioProcessor] Download error:', error.message);
         throw error;
     }
 }

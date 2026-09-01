@@ -32,6 +32,21 @@ function isBotOnline() {
 // Système de réponse différée (15 min) — conservé pour texte + notes vocales
 const DELAYED_REPLY_MS = 15 * 60 * 1000; // 15 minutes
 const pendingReplies = new Map(); // jid → { timer, msgData }
+// Anti-répétition : une seule réponse automatique (texte/audio) par contact et par jour
+const lastAutoReplyDate = new Map(); // jid → 'YYYY-MM-DD'
+
+function todayKey() {
+    // Journée locale du serveur (format YYYY-MM-DD)
+    return new Date().toLocaleDateString('en-CA');
+}
+
+function wasAutoRepliedToday(jid) {
+    return lastAutoReplyDate.get(jid) === todayKey();
+}
+
+function markAutoRepliedToday(jid) {
+    lastAutoReplyDate.set(jid, todayKey());
+}
 
 function cancelPendingReply(jid) {
     const pending = pendingReplies.get(jid);
@@ -2122,6 +2137,12 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
                     return;
                 }
 
+                // Une seule réponse auto par contact et par jour
+                if (wasAutoRepliedToday(remoteJid)) {
+                    console.log(`[DelayedReply] Réponse auto déjà envoyée aujourd'hui à ${remoteJid} — skip`);
+                    return;
+                }
+
                 const audioMessage = msg.message.audioMessage || msg.message.viewOnceMessage?.message?.audioMessage;
                 if (!audioMessage) {
                     console.log(`[AudioHandler] No audioMessage found — skipping`);
@@ -2174,6 +2195,7 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
 
                         audioProcessor.cleanup([audioPath]);
                         if (readReceiptsEnabled) await sock.readMessages([msg.key]);
+                        markAutoRepliedToday(remoteJid);
                         console.log(`[DelayedReply] ✓ Audio response sent after 15min delay`);
                     } catch (err) {
                         console.error('[DelayedReply Audio] Error:', err.message);
@@ -2209,6 +2231,12 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
                 return;
             }
 
+            // Une seule réponse auto par contact et par jour
+            if (wasAutoRepliedToday(remoteJid)) {
+                console.log(`[DelayedReply] Réponse auto déjà envoyée aujourd'hui à ${remoteJid} — skip`);
+                return;
+            }
+
             const callerName = msg.pushName && msg.pushName.trim().length > 0
                 ? msg.pushName.trim()
                 : '+' + msgSenderClean;
@@ -2236,6 +2264,7 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
 
                     const finalReply = `📝 *Nota: Sidoine n'est pas là actuellement.*\n\n${reply}`;
                     await sock.sendMessage(remoteJid, { text: finalReply });
+                    markAutoRepliedToday(remoteJid);
                     chatHistory.recordMessage(remoteJid, callerName, 'bot', reply);
 
                     if (readReceiptsEnabled) {
