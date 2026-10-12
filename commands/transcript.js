@@ -1,24 +1,22 @@
 const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
 const Groq = require('groq-sdk');
 
-const GROQ_FALLBACK = String.fromCharCode(103, 115, 107, 95) + "d5jf754z87slN37" + "D332bWGdyb3FYjoQbx" + "MgFsZ8TsxkrP6DlDZCp";
-
 // Note: Initialization is handled only if key is present to avoid crash
+const key = (process.env.GROQ_API_KEY || '').trim();
 let groq;
-try {
-    const key = process.env.GROQ_API_KEY || GROQ_FALLBACK;
-    if (key) {
+if (key) {
+    try {
         groq = new Groq({ apiKey: key });
+    } catch (e) {
+        console.error('[Transcript Init Error]:', e.message);
     }
-} catch (e) {
-    console.error('[Transcript Init Error]:', e.message);
 }
 
 module.exports = {
     name: 'transcript',
     description: 'Transcrit une note vocale en texte via Groq Whisper.',
     run: async ({ sock, msg, replyWithTag }) => {
-        if (!groq) return replyWithTag(sock, msg.key.remoteJid, msg, "❌ Erreur: Groq Whisper n'est pas configuré (Clé API manquante).");
+        if (!groq) return replyWithTag(sock, msg.key.remoteJid, msg, "❌ Erreur: Groq Whisper n'est pas configuré. Ajoutez GROQ_API_KEY (clé gsk_...) dans Render → Environment, puis redéployez.");
 
         try {
             const remoteJid = msg.key.remoteJid;

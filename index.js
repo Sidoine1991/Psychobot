@@ -2199,9 +2199,14 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
                         console.log(`[DelayedReply] ✓ Audio response sent after 15min delay`);
                     } catch (err) {
                         console.error('[DelayedReply Audio] Error:', err.message);
+                        // IMPORTANT: ne JAMAIS envoyer d'erreur au contact.
+                        // L'expéditeur ne doit rien recevoir (ni ack, ni erreur).
+                        // On alerte uniquement le propriétaire pour diagnostic.
                         try {
-                            await sock.sendMessage(remoteJid, { text: `❌ Erreur transcription audio: ${err.message}` });
-                        } catch (e) { /* ignore send error */ }
+                            await notifyOwner(
+                                `⚠️ *Transcription audio échouée*\n👤 ${callerNameAudio} (${msgSenderClean})\n🕐 ${new Date().toLocaleString('fr-FR', { timeZone: 'Africa/Porto-Novo' })}\n❌ ${err.message}`
+                            );
+                        } catch (e) { /* ignore owner notify error */ }
                     }
                 }, DELAYED_REPLY_MS);
 

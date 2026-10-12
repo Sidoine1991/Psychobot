@@ -13,10 +13,14 @@ const { convertToOpus } = require('../lib/audioHelper');
 // AWS Transcribe integration (uses existing AWS Bedrock credentials)
 const { transcribeAudioAWS } = require('./aws-transcribe');
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
-const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
+// Trim des clés : évite les échecs silencieux dus aux espaces/sauts de ligne
+// ajoutés lors d'un copier-coller dans le dashboard Render.
+const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || '').trim();
+const GROQ_API_KEY = (process.env.GROQ_API_KEY || '').trim();
 const GROQ_TRANSCRIBE_MODEL = process.env.GROQ_TRANSCRIBE_MODEL || 'whisper-large-v3-turbo';
-const NVIDIA_NIM_API_KEY = process.env.NVIDIA_NIM_API_KEY;
+const NVIDIA_NIM_API_KEY = (process.env.NVIDIA_NIM_API_KEY || '').trim() || undefined;
+// Modèle ASR NVIDIA NIM (fallback de transcription). Surchargeable via l'env.
+const NVIDIA_NIM_ASR_MODEL = (process.env.NVIDIA_NIM_ASR_MODEL || 'nvidia/canary-1b').trim();
 
 // Validate OpenAI API key format (reject placeholder values)
 function isValidOpenAIKey(key) {
@@ -34,6 +38,22 @@ function isValidTranscriptionKey(key) {
     const placeholders = ['placeholder', 'your-key-here', 'xxx'];
     if (placeholders.some(p => key.toLowerCase().includes(p))) return false;
     return key.startsWith('gsk_') && key.length >= 20;
+}
+
+// Validation clé NVIDIA NIM (nvapi-...) — fallback de transcription
+function isValidNvidiaKey(key) {
+    if (!key) return false;
+    const placeholders = ['placeholder', 'your-key-here', 'xxx'];
+    if (placeholders.some(p => key.toLowerCase().includes(p))) return false;
+    return key.startsWith('nvapi-') && key.length >= 20;
+}
+
+// Aide au diagnostic : décrit l'état réel de chaque clé (sans la divulguer)
+function keyDiagnostic(name, key, prefix) {
+    if (!key) return `${name}: ❌ absente`;
+    const valid = key.startsWith(prefix) && key.length >= 20;
+    const safePreview = key.slice(0, 4) + '…' + key.slice(-4);
+    return `${name}: ${valid ? '✅' : '⚠️'} "${safePreview}" (${key.length} chars)`;
 }
 const NVIDIA_NIM_BASE = 'https://integrate.api.nvidia.com/v1';
 const NVIDIA_NIM_MODEL = process.env.NVIDIA_NIM_MODEL || 'meta/llama-3.3-70b-instruct';
@@ -77,7 +97,7 @@ async function transcribeWithProvider(audioPath, provider) {
 
     if (provider === 'nvidia') {
         formData.append('file', audioBuffer, { filename: 'audio.ogg' });
-        formData.append('model', 'nvidia/canary-1b');
+        formData.append('model', NVIDIA_NIM_ASR_MODEL);
         const whisperLang = process.env.WHISPER_LANGUAGE;
         if (whisperLang) formData.append('language', whisperLang);
         const response = await axios.post(`${NVIDIA_NIM_BASE}/audio/transcriptions`, formData, {
@@ -116,16 +136,23 @@ async function transcribeAudioOpenAI(audioPath) {
         }
     }
 
-    // Fallback API providers (Groq d'abord : clé active et moins chère, puis OpenAI)
+    // Fallback API providers (Groq d'abord : clé active et moins chère, puis OpenAI, puis NVIDIA NIM)
     const providers = [];
     if (isValidTranscriptionKey(GROQ_API_KEY)) providers.push('groq');
     if (isValidOpenAIKey(OPENAI_API_KEY)) providers.push('openai');
+    if (isValidNvidiaKey(NVIDIA_NIM_API_KEY)) providers.push('nvidia');
 
     if (providers.length === 0) {
-        const hasValidKey = isValidOpenAIKey(OPENAI_API_KEY);
-        const hasAWS = !!AWS_AVAILABLE;
+        const details = [
+            keyDiagnostic('GROQ_API_KEY', GROQ_API_KEY, 'gsk_'),
+            keyDiagnostic('OPENAI_API_KEY', OPENAI_API_KEY, 'sk-'),
+            keyDiagnostic('NVIDIA_NIM_API_KEY', NVIDIA_NIM_API_KEY, 'nvapi-'),
+            `AWS: ${AWS_AVAILABLE ? '✅' : '❌ absente'}`
+        ].join(' | ');
+        console.error(`[AudioProcessor] Aucun service de transcription utilisable — ${details}`);
         throw new Error(
-            `No transcription service available (AWS: ${hasAWS}, Groq key valid: ${!!GROQ_API_KEY}, OpenAI key valid: ${hasValidKey})`
+            `Aucun service de transcription disponible (${details}). ` +
+            `Vérifiez GROQ_API_KEY / OPENAI_API_KEY / NVIDIA_NIM_API_KEY / AWS dans Render (Environment) puis redéployez.`
         );
     }
 
@@ -153,12 +180,21 @@ async function transcribeAudioOpenAI(audioPath) {
 }
 
 /**
- * Fallback transcription using local speech-to-text (if available)
- * For now, returns placeholder - can be extended with SpeechRecognition API
+ * Dernier recours de transcription (quand tous les providers de la chaîne ont échoué).
+ * L'utilisateur a choisi NVIDIA NIM comme fallback local : on retente ici une
+ * transcription NVIDIA, puis on échoue explicitement (plus jamais de faux texte).
+ * @param {string} audioPath - Chemin du fichier OGG
+ * @returns {Promise<string>} - Texte transcrit
  */
 async function transcribeAudioLocal(audioPath) {
-    console.warn('[AudioProcessor] Local transcription not yet implemented, using placeholder');
-    return '[Audio transcription - local fallback not available]';
+    if (isValidNvidiaKey(NVIDIA_NIM_API_KEY)) {
+        console.warn('[AudioProcessor] Fallback local → nouvel essai NVIDIA NIM...');
+        return await transcribeWithProvider(audioPath, 'nvidia');
+    }
+    throw new Error(
+        'Fallback de transcription indisponible : renseignez NVIDIA_NIM_API_KEY (nvapi-...) ' +
+        'dans l’environnement pour activer le fallback NVIDIA NIM.'
+    );
 }
 
 /**
@@ -293,7 +329,7 @@ async function processAudioMessage(audioMessage, downloadContentFromMessage, rem
             transcript = await transcribeAudioLocal(downloadedPath);
         }
 
-        if (!transcript || transcript.includes('placeholder') || transcript.includes('local fallback not available') || transcript.includes('local transcription not yet')) {
+        if (!transcript || !transcript.trim() || transcript.includes('placeholder') || transcript.includes('local fallback not available') || transcript.includes('local transcription not yet')) {
             console.error(`[AudioProcessor] Transcription invalide: "${transcript}"`);
             throw new Error('Transcription failed');
         }
@@ -338,7 +374,7 @@ async function processAudioMessage(audioMessage, downloadContentFromMessage, rem
         });
 
         // Return a user-friendly error
-        throw new Error(`Transcription impossible: ${error.message}. Vérifiez les clés de transcription (GROQ_API_KEY / OPENAI_API_KEY / AWS) dans Render.`);
+        throw new Error(`Transcription impossible: ${error.message}. Vérifiez les clés de transcription (GROQ_API_KEY / OPENAI_API_KEY / NVIDIA_NIM_API_KEY / AWS) dans Render.`);
     }
 }
 
