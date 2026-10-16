@@ -42,20 +42,8 @@ const MEDIA_TEXT_RESPONSES = {
         '😂 Classique !',
         '👌 Trop bon ce sticker',
     ],
-    image: [
-        '📸 Belle photo !',
-        '😍 Sympa cette image !',
-        '✨ J\'aime bien ça !',
-        '👀 Ooh, je vois !',
-        '🔥 Belle image !',
-    ],
-    video: [
-        '🎬 Vidéo reçue 👀',
-        '🎥 Je regarde ça !',
-        '🤩 Super vidéo !',
-        '🔥 Trop bien cette vidéo !',
-        '🎬 Bien vu !',
-    ],
+    image: [],
+    video: [],
     audio: [
         '🎵 Message vocal reçu ✓',
         '🎤 Je t\'écoute...',
@@ -130,9 +118,11 @@ module.exports = async (msg, sock) => {
     if (mediaType && !text.trim()) {
         if (!isDM && !isMentioned) return;
         if (isDM && isConversationActive(contactJid)) return;
+        // Image/vidéo : ne rien envoyer dans le chat (pas d'ack, pas de réaction)
+        if (mediaType === 'image' || mediaType === 'video') return;
 
         const responses = MEDIA_TEXT_RESPONSES[mediaType];
-        if (!responses) return; // reaction/contact → ignorer silencieusement
+        if (!responses || responses.length === 0) return; // reaction/contact/image/video → silence
 
         // Réaction emoji d'abord (si le type le supporte)
         const emojiPool = MEDIA_REACTIONS[mediaType];

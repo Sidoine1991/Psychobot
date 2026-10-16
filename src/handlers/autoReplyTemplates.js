@@ -12,10 +12,8 @@ function getAutoReplyTemplate(decision, messageType, userMessage = '') {
             withIcon: true,
         },
         image_ack: {
-            emoji: '🖼️',
-            text: 'Image reçue ✓',
-            action: 'send_ack_only',
-            withIcon: true,
+            text: null,
+            action: 'no_reply',
         },
         context_aware: {
             emoji: '✓',

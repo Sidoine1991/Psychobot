@@ -2214,19 +2214,9 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
                 return;
             }
 
-            // Handle image/video (ack immédiat — conversation vivante)
+            // Image/vidéo sans traitement utile : silence (pas d'ack "reçue" dans le chat)
             if (messageType === 'image' || messageType === 'video') {
-                try {
-                    const template = getAutoReplyTemplate('image_ack', messageType, '');
-                    const reply = formatReplyForWhatsApp(template, true);
-                    if (reply) {
-                        await sock.sendMessage(remoteJid, { text: reply });
-                        if (readReceiptsEnabled) await sock.readMessages([msg.key]);
-                    }
-                    console.log(`[AutoReply] ✓ Media ack immédiat envoyé à ${remoteJid}`);
-                } catch (err) {
-                    console.error('[AutoReply Media] Error:', err.message);
-                }
+                console.log(`[AutoReply] ${messageType} ignorée (pas d'ack) pour ${remoteJid}`);
                 return;
             }
 
