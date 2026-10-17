@@ -1,5 +1,6 @@
 // commands/sticker.js
-const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
+const { getBaileys } = require('../src/lib/baileys');
+const downloadContentFromMessage = (...args) => getBaileys().downloadContentFromMessage(...args);
 const ffmpeg = require('fluent-ffmpeg');
 const fs = require('fs');
 const path = require('path');

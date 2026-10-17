@@ -1,7 +1,8 @@
 // commands/statusdown.js
 const fs = require("fs");
 const path = require("path");
-const { downloadContentFromMessage } = require("@whiskeysockets/baileys");
+const { getBaileys } = require('../src/lib/baileys');
+const downloadContentFromMessage = (...args) => getBaileys().downloadContentFromMessage(...args);
 
 module.exports = {
     name: "statusdown",

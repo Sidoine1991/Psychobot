@@ -58,20 +58,27 @@
 
         #qr-container {
             margin: 20px 0;
-            min-height: 264px;
+            min-height: 320px;
             display: flex;
             justify-content: center;
             align-items: center;
-            background: rgba(255, 255, 255, 0.1);
+            background: #ffffff;
             border-radius: 12px;
-            padding: 10px;
+            padding: 18px;
         }
 
         #qr-image {
-            width: 250px;
-            height: 250px;
-            border-radius: 8px;
+            width: 280px;
+            height: 280px;
+            border-radius: 0;
             display: none;
+            background: #ffffff;
+            image-rendering: auto;
+        }
+
+        #qr-image.expired {
+            opacity: 0.25;
+            filter: grayscale(1);
         }
 
         .status {
@@ -150,7 +157,7 @@
 <body>
     <div class="container">
         <h2 id="title">Scan QR Code</h2>
-        <p id="instructions" style="font-size: 0.9rem; color: #ccc;">Open WhatsApp > Linked Devices > Link a Device</p>
+        <p id="instructions" style="font-size: 0.9rem; color: #ccc;">WhatsApp → Appareils connectés → Connecter un appareil. Scannez vite : le QR change toutes les ~20 s.</p>
 
         <div id="qr-container">
             <div class="spinner" id="spinner"></div>
@@ -162,7 +169,8 @@
 
         <button id="newQrBtn" class="btn-new-qr" style="display: none; margin-top: 15px;">🔄 Generate New QR Code</button>
 
-        <a href="/" class="btn-home">← Back to Home</a>
+        <a href="/pair" class="btn-home">Le scan échoue ? Utiliser le code d'appairage</a>
+        <a href="/" class="btn-home">← Accueil</a>
     </div>
 
     <script>
@@ -174,27 +182,62 @@
         const instructionsDiv = document.getElementById('instructions');
         const newQrBtn = document.getElementById('newQrBtn');
         let countdownTimer = null;
+        let shownQrAt = 0;
+
+        function showConnected(user) {
+            if (countdownTimer) clearInterval(countdownTimer);
+            spinner.style.display = 'none';
+            qrImage.style.display = 'none';
+            pairingCodeDiv.style.display = 'none';
+            newQrBtn.style.display = 'none';
+            statusDiv.style.color = '';
+            statusDiv.innerHTML = `
+                <div style="font-size: 3rem; margin-bottom:10px">✅</div>
+                <div style="color: #4ade80; font-weight: bold">Connecté</div>
+                <div>User: ${user || ''}</div>
+            `;
+            setTimeout(() => window.location.href = '/', 3000);
+        }
 
         function showQr(data) {
+            if (!data.qr) return;
+            if (data.qrAt && data.qrAt === shownQrAt) return;
+            shownQrAt = data.qrAt || Date.now();
             spinner.style.display = 'none';
             qrImage.style.display = 'block';
+            qrImage.classList.remove('expired');
             pairingCodeDiv.style.display = 'none';
             newQrBtn.style.display = 'none';
             statusDiv.style.color = '';
             qrImage.src = data.qr;
-            const expires = data.expiresIn ?? 120;
-            statusDiv.innerHTML = `<span style="color: #4ade80">Scannez maintenant !</span> <small>(expire dans ${expires}s)</small>`;
+            const expires = data.expiresIn ?? 20;
             if (countdownTimer) clearInterval(countdownTimer);
+            if (expires <= 0) {
+                qrImage.classList.add('expired');
+                statusDiv.innerHTML = '<span style="color: #f59e0b">QR expiré — un nouveau arrive...</span>';
+                return;
+            }
+            statusDiv.innerHTML = `<span style="color: #4ade80">Scannez maintenant</span> <small>(expire dans ${expires}s)</small>`;
             let left = expires;
             countdownTimer = setInterval(() => {
                 left -= 1;
                 if (left <= 0) {
                     clearInterval(countdownTimer);
-                    statusDiv.innerHTML = '<span style="color: #f59e0b">QR expiré — attente du nouveau code...</span>';
+                    qrImage.classList.add('expired');
+                    statusDiv.innerHTML = '<span style="color: #f59e0b">QR expiré — un nouveau arrive...</span>';
                     return;
                 }
-                statusDiv.innerHTML = `<span style="color: #4ade80">Scannez maintenant !</span> <small>(expire dans ${left}s)</small>`;
+                statusDiv.innerHTML = `<span style="color: #4ade80">Scannez maintenant</span> <small>(expire dans ${left}s)</small>`;
             }, 1000);
+        }
+
+        async function pollQr() {
+            try {
+                const resp = await fetch('/qr-data');
+                const data = await resp.json();
+                if (data.type === 'connected') showConnected(data.user);
+                else if (data.type === 'qr') showQr(data);
+            } catch (e) { /* WS remains the primary channel */ }
         }
 
         newQrBtn.addEventListener('click', async () => {
@@ -227,7 +270,9 @@
             const ws = new WebSocket(wsUrl);
 
             ws.onopen = () => {
-                statusDiv.textContent = "En attente du QR code...";
+                if (qrImage.style.display !== 'block') {
+                    statusDiv.textContent = "En attente du QR code...";
+                }
             };
 
             ws.onmessage = (event) => {
@@ -249,6 +294,7 @@
                     }
 
                     if (data.type === 'status') {
+                        if (qrImage.style.display === 'block' && !qrImage.classList.contains('expired')) return;
                         statusDiv.textContent = data.message;
                     }
 
@@ -262,18 +308,7 @@
                     }
 
                     if (data.type === 'connected') {
-                        if (countdownTimer) clearInterval(countdownTimer);
-                        spinner.style.display = 'none';
-                        qrImage.style.display = 'none';
-                        pairingCodeDiv.style.display = 'none';
-                        newQrBtn.style.display = 'none';
-                        statusDiv.style.color = '';
-                        statusDiv.innerHTML = `
-                            <div style="font-size: 3rem; margin-bottom:10px">✅</div>
-                            <div style="color: #4ade80; font-weight: bold">Connected Successfully!</div>
-                            <div>User: ${data.user}</div>
-                        `;
-                        setTimeout(() => window.location.href = '/', 3000);
+                        showConnected(data.user);
                     }
 
                     if (data.type === 'error') {
@@ -300,6 +335,8 @@
         }
 
         connectWS();
+        pollQr();
+        setInterval(pollQr, 2000);
     </script>
 </body>
 

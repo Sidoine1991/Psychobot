@@ -1,11 +1,4 @@
-const {
-    default: makeWASocket,
-    useMultiFileAuthState,
-    DisconnectReason,
-    fetchLatestBaileysVersion,
-    makeCacheableSignalKeyStore,
-    delay
-} = require("@whiskeysockets/baileys");
+const { initBaileys, getBaileys, makeWASocket } = require('./src/lib/baileys');
 const fs = require('fs-extra');
 const pino = require("pino");
 const path = require('path');
@@ -137,6 +130,13 @@ async function startBot() {
         fs.copySync(CREDS_PATH, path.join(SESSION_DIR, 'creds.json'));
     }
 
+    await initBaileys();
+    const {
+        useMultiFileAuthState,
+        DisconnectReason,
+        fetchLatestBaileysVersion,
+        makeCacheableSignalKeyStore
+    } = getBaileys();
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
     let version;
     try {
@@ -150,7 +150,6 @@ async function startBot() {
     const sock = makeWASocket({
         version,
         logger: pino({ level: 'silent' }),
-        printQRInTerminal: true, // Should not happen if creds exist
         auth: {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),

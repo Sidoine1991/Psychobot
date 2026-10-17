@@ -1,5 +1,6 @@
 // commands/extract.js
-const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
+const { getBaileys } = require('../src/lib/baileys');
+const downloadContentFromMessage = (...args) => getBaileys().downloadContentFromMessage(...args);
 const fs = require('fs-extra');
 const path = require('path');
 

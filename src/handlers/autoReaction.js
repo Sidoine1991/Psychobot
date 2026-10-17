@@ -1,5 +1,3 @@
-const { proto } = require("@whiskeysockets/baileys");
-
 module.exports = async (msg, sock) => {
     // 1. Get text content
     let text = "";

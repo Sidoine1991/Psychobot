@@ -1,4 +1,4 @@
-const { downloadMediaMessage } = require("@whiskeysockets/baileys");
+const { getBaileys } = require("../lib/baileys");
 
 module.exports = async (reaction, sock, store) => {
     try {
@@ -33,6 +33,7 @@ module.exports = async (reaction, sock, store) => {
             const mediaMsg = content[msgType];
 
             // Download media
+            const { downloadMediaMessage } = getBaileys();
             const buffer = await downloadMediaMessage(
                 msg,
                 'buffer',

@@ -1,7 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
+const { getBaileys } = require('../src/lib/baileys');
+const downloadContentFromMessage = (...args) => getBaileys().downloadContentFromMessage(...args);
 const ffmpegPath = require('ffmpeg-static');
 
 // Setup temp dir

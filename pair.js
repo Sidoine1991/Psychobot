@@ -8,14 +8,7 @@ const { HttpsProxyAgent } = require('https-proxy-agent');
 const MESSAGE = process.env.MESSAGE || `*SESSION GÉNÉRÉE AVEC SUCCÈS* ✅`;
 
 // REMOVED: const uploadToPastebin = require('./Paste'); 
-const {
-    default: makeWASocket,
-    useMultiFileAuthState,
-    delay,
-    makeCacheableSignalKeyStore,
-    Browsers,
-    DisconnectReason
-} = require("@whiskeysockets/baileys");
+const { initBaileys, getBaileys, makeWASocket } = require('./src/lib/baileys');
 
 // Ensure the directory is empty when the app starts
 // NOTE: We keep the temporary auth_info_baileys folder for Baileys to store credentials initially.
@@ -27,6 +20,14 @@ router.get('/', async (req, res) => {
     let num = req.query.number;
 
     async function SUHAIL() {
+        await initBaileys();
+        const {
+            useMultiFileAuthState,
+            delay,
+            makeCacheableSignalKeyStore,
+            Browsers,
+            DisconnectReason
+        } = getBaileys();
         // Baileys needs a directory to save files, we'll move creds.json later.
         const { state, saveCreds } = await useMultiFileAuthState(`./auth_info_baileys`);
         const pairProxyAgent = process.env.PROXY_URL ? new HttpsProxyAgent(process.env.PROXY_URL) : undefined;
@@ -36,7 +37,6 @@ router.get('/', async (req, res) => {
                     creds: state.creds,
                     keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }).child({ level: "fatal" })),
                 },
-                printQRInTerminal: false,
                 logger: pino({ level: "fatal" }).child({ level: "fatal" }),
                 browser: Browsers.macOS("Desktop"),
                 agent: pairProxyAgent,

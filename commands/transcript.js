@@ -1,4 +1,5 @@
-const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
+const { getBaileys } = require('../src/lib/baileys');
+const downloadContentFromMessage = (...args) => getBaileys().downloadContentFromMessage(...args);
 const Groq = require('groq-sdk');
 
 // Note: Initialization is handled only if key is present to avoid crash

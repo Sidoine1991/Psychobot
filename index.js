@@ -1,6 +1,7 @@
 // Psychobot - Core V2 (Clean Slate Refactor + WS Support)
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestWaWebVersion, Browsers, makeCacheableSignalKeyStore, delay, jidNormalizedUser } = require('@whiskeysockets/baileys');
+const { initBaileys, getBaileys, makeWASocket } = require('./src/lib/baileys');
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const QRCode = require("qrcode");
 const pino = require("pino");
 const fs = require("fs");
@@ -142,7 +143,13 @@ const OWNER_LIDS = process.env.OWNER_IDS ? process.env.OWNER_IDS.split(",").map(
 const isOwner = (jid) => {
     if (typeof jid !== 'string') return false;
     const clean = jid.split(':')[0].split('@')[0];
-    return (OWNER_PN && clean === OWNER_PN) || OWNER_LIDS.includes(clean);
+    if ((OWNER_PN && clean === OWNER_PN) || OWNER_LIDS.includes(clean)) return true;
+    if (sock?.user) {
+        const mePn = cleanJid(sock.user.id);
+        const meLid = cleanJid(sock.user.lid || sock.user.phoneNumber || '');
+        if (clean && (clean === mePn || clean === meLid)) return true;
+    }
+    return false;
 };
 const cleanJid = (jid) => jid ? jid.split(':')[0].split('@')[0] : "";
 const startTime = new Date();
@@ -164,13 +171,25 @@ function rememberWaMessage(key, message) {
 function normalizeSendJid(jid) {
     if (!jid || typeof jid !== 'string') return jid;
     if (jid.includes(':') && (jid.endsWith('@s.whatsapp.net') || jid.endsWith('@lid'))) {
-        return jidNormalizedUser(jid);
+        try {
+            return getBaileys().jidNormalizedUser(jid);
+        } catch (_) {
+            return jid.split(':')[0] + '@' + jid.split('@')[1];
+        }
     }
     return jid;
 }
 
 function getOwnerJid() {
-    if (sock?.user?.id) return jidNormalizedUser(sock.user.id);
+    try {
+        const { jidNormalizedUser } = getBaileys();
+        if (sock?.user?.lid) return jidNormalizedUser(sock.user.lid);
+        if (sock?.user?.id) return jidNormalizedUser(sock.user.id);
+    } catch (_) {}
+    if (sock?.user?.id) {
+        const raw = String(sock.user.id);
+        return raw.split(':')[0].split('@')[0] + (raw.includes('@lid') ? '@lid' : '@s.whatsapp.net');
+    }
     return `${OWNER_PN}@s.whatsapp.net`;
 }
 
@@ -450,12 +469,23 @@ function finishPairing(success) {
 }
 
 async function startPairConnection(phoneNum, res, codeAlreadySent = false) {
+    await initBaileys();
+    const {
+        useMultiFileAuthState,
+        makeCacheableSignalKeyStore,
+        Browsers,
+        DisconnectReason,
+        fetchLatestWaWebVersion,
+        fetchLatestBaileysVersion
+    } = getBaileys();
+    const fetchWaVersion = fetchLatestWaWebVersion || fetchLatestBaileysVersion;
+
     const pairLogger = pino({ level: 'fatal' }).child({ level: 'fatal' });
     const { state, saveCreds } = await useMultiFileAuthState(PAIR_FOLDER);
 
     let pairVersion;
     try {
-        pairVersion = (await fetchLatestWaWebVersion()).version;
+        pairVersion = (await fetchWaVersion()).version;
     } catch (e) {
         pairVersion = [2, 3000, 1045017392];
     }
@@ -468,7 +498,6 @@ async function startPairConnection(phoneNum, res, codeAlreadySent = false) {
         },
         logger: pairLogger,
         browser: Browsers.windows('Chrome'),
-        printQRInTerminal: false,
         connectTimeoutMs: 60000,
         qrTimeout: 120000,
         agent: resolveProxyAgent(),
@@ -537,6 +566,30 @@ let isStarting = false;
 let isConnected = false;
 let latestQR = null;
 let latestQRAt = 0;
+// WhatsApp rotates QR refs about every 20s; a 120s countdown made people scan dead codes.
+const QR_TTL_SEC = 20;
+const QR_IMAGE_OPTS = {
+    errorCorrectionLevel: 'L',
+    margin: 4,
+    width: 512,
+    color: { dark: '#000000', light: '#FFFFFF' }
+};
+
+async function encodeQrDataUrl(qrString) {
+    return QRCode.toDataURL(qrString, QR_IMAGE_OPTS);
+}
+
+function buildQrPayload(dataUrl) {
+    const ageSec = latestQRAt ? Math.floor((Date.now() - latestQRAt) / 1000) : 0;
+    return {
+        type: 'qr',
+        qr: dataUrl,
+        qrAt: latestQRAt,
+        ageSec,
+        expiresIn: Math.max(0, QR_TTL_SEC - ageSec)
+    };
+}
+
 let lastConnectedAt = 0;
 let sock = null;
 let isPairingInProgress = false;
@@ -698,6 +751,22 @@ app.get('/qr', (req, res) => {
             console.log(chalk.green('[QR] File sent successfully'));
         }
     });
+});
+
+app.get('/qr-data', async (req, res) => {
+    try {
+        if (getWhatsAppStatus().connected && sock?.user?.id) {
+            return res.json({ type: 'connected', user: sock.user.id.split(':')[0] });
+        }
+        if (!latestQR) {
+            return res.json({ type: 'waiting' });
+        }
+        const url = await encodeQrDataUrl(latestQR);
+        return res.json(buildQrPayload(url));
+    } catch (e) {
+        console.error('[QR-DATA]', e.message);
+        return res.status(500).json({ type: 'error', message: e.message });
+    }
 });
 
 app.get('/pair', (req, res) => {
@@ -1433,9 +1502,8 @@ const broadcast = (data) => {
 wss.on('connection', (ws) => {
     console.log('[WS] Client connected');
     if (latestQR) {
-        QRCode.toDataURL(latestQR).then(url => {
-            const ageSec = latestQRAt ? Math.floor((Date.now() - latestQRAt) / 1000) : 0;
-            ws.send(JSON.stringify({ type: 'qr', qr: url, ageSec, expiresIn: Math.max(0, 120 - ageSec) }));
+        encodeQrDataUrl(latestQR).then(url => {
+            ws.send(JSON.stringify(buildQrPayload(url)));
         });
     } else if (getWhatsAppStatus().connected) {
         ws.send(JSON.stringify({ type: 'connected', user: sock.user.id.split(':')[0] }));
@@ -1457,6 +1525,16 @@ async function startBot() {
     isStarting = true;
     isConnected = false;
     closeSocket();
+    await initBaileys();
+    const {
+        useMultiFileAuthState,
+        makeCacheableSignalKeyStore,
+        Browsers,
+        DisconnectReason,
+        fetchLatestWaWebVersion,
+        fetchLatestBaileysVersion
+    } = getBaileys();
+    const fetchWaVersion = fetchLatestWaWebVersion || fetchLatestBaileysVersion;
 
     console.log(chalk.cyan('=== STARTBOT CALLED [v2] ==='));
 
@@ -1566,7 +1644,7 @@ async function startBot() {
     try {
         const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000));
         const fetchResult = await Promise.race([
-            fetchLatestWaWebVersion(),
+            fetchWaVersion(),
             timeoutPromise
         ]);
         version = fetchResult.version;
@@ -1589,7 +1667,6 @@ async function startBot() {
         },
         logger,
         browser: Browsers.windows('Chrome'),
-        printQRInTerminal: false,
         markOnlineOnConnect: false,
         generateHighQualityLinkPreview: true,
         connectTimeoutMs: 60000,
@@ -1655,9 +1732,9 @@ async function startBot() {
             latestQRAt = Date.now();
             console.log(chalk.yellow(`[QR] New code generated.`));
             try {
-                const url = await QRCode.toDataURL(qr);
-                broadcast({ type: 'qr', qr: url, ageSec: 0, expiresIn: 120 });
-                broadcast({ type: 'status', message: 'Please scan the new QR Code (valid ~2 min)' });
+                const url = await encodeQrDataUrl(qr);
+                broadcast(buildQrPayload(url));
+                broadcast({ type: 'status', message: `Scannez le QR (valide ~${QR_TTL_SEC}s)` });
             } catch (e) {
                 console.error('QR Encode Error', e);
             }
@@ -2020,7 +2097,10 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
         // Skip if message is from the bot itself or the owner
         const msgSender = msg.key.participant || msg.participant || msg.key.remoteJid;
         const msgSenderClean = msgSender.split(':')[0].split('@')[0];
-        const isFromOwner = msg.key.fromMe || isOwner(msg.key.participant || msg.key.remoteJid);
+        const isFromOwner = msg.key.fromMe
+            || isOwner(msg.key.participant || msg.key.remoteJid)
+            || isOwner(msg.key.participantAlt)
+            || isOwner(msg.key.remoteJidAlt);
         const isGroupChat = remoteJid.endsWith('@g.us');
 
         if (isFromOwner) {
@@ -2070,7 +2150,7 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
             try {
                 const ownerJid = getOwnerJid();
                 // Don't forward if this IS the owner's own chat with the bot
-                if (jidNormalizedUser(remoteJid) !== ownerJid) {
+                if (getBaileys().jidNormalizedUser(remoteJid) !== ownerJid) {
                     const senderName = msg.pushName || msgSenderClean;
                     const msgType = detectMessageType(msg.message);
                     const preview = text
@@ -2551,7 +2631,7 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
             }
         }
     });
-    const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
+    const { downloadContentFromMessage } = getBaileys();
 
     // Reaction Handler for ViewOnce Extraction (Incognito)
     sock.ev.on("messages.reaction", async (reactions) => {
