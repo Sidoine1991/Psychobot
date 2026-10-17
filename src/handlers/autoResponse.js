@@ -200,10 +200,13 @@ module.exports = async (msg, sock) => {
         if (detectLeaveMessage(text)) {
             await db.saveAgendaMessage(contactJid, contactName, text);
             try {
-                const ownerJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
-                await sock.sendMessage(ownerJid, {
-                    text: `📋 *Message agenda*\n👤 ${contactName} (${contactJid.split('@')[0]})\n💬 ${text}\n🕐 ${new Date().toLocaleString('fr-FR', { timeZone: 'Africa/Porto-Novo' })}`,
-                });
+                if (sock.user?.id) {
+                    const raw = String(sock.user.id);
+                    const ownerJid = raw.split(':')[0].split('@')[0] + (raw.includes('@lid') ? '@lid' : '@s.whatsapp.net');
+                    await sock.sendMessage(ownerJid, {
+                        text: `📋 *Message agenda*\n👤 ${contactName} (${contactJid.split('@')[0]})\n💬 ${text}\n🕐 ${new Date().toLocaleString('fr-FR', { timeZone: 'Africa/Porto-Novo' })}`,
+                    });
+                }
             } catch (_) {}
             const aiReply = await aiService.getAIResponse(
                 `L'utilisateur "${contactName}" laisse ce message pour Sidoine : "${text}". Confirme poliment en 1-2 phrases.`,

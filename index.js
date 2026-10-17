@@ -1,6 +1,6 @@
 // Psychobot - Core V2 (Clean Slate Refactor + WS Support)
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestWaWebVersion, Browsers, makeCacheableSignalKeyStore, delay } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestWaWebVersion, Browsers, makeCacheableSignalKeyStore, delay, jidNormalizedUser } = require('@whiskeysockets/baileys');
 const QRCode = require("qrcode");
 const pino = require("pino");
 const fs = require("fs");
@@ -148,11 +148,49 @@ const cleanJid = (jid) => jid ? jid.split(':')[0].split('@')[0] : "";
 const startTime = new Date();
 const botStartTime = Math.floor(Date.now() / 1000);
 
+// WhatsApp cannot decrypt messages sent to a device JID (number:device@...).
+// Keep the last sent payloads so Baileys can resend on decrypt-failure retry.
+const retryMessageStore = new Map();
+
+function rememberWaMessage(key, message) {
+    if (!key?.id || !message) return;
+    retryMessageStore.set(key.id, message);
+    if (key.remoteJid) retryMessageStore.set(`${key.remoteJid}|${key.id}`, message);
+    while (retryMessageStore.size > 500) {
+        retryMessageStore.delete(retryMessageStore.keys().next().value);
+    }
+}
+
+function normalizeSendJid(jid) {
+    if (!jid || typeof jid !== 'string') return jid;
+    if (jid.includes(':') && (jid.endsWith('@s.whatsapp.net') || jid.endsWith('@lid'))) {
+        return jidNormalizedUser(jid);
+    }
+    return jid;
+}
+
+function getOwnerJid() {
+    if (sock?.user?.id) return jidNormalizedUser(sock.user.id);
+    return `${OWNER_PN}@s.whatsapp.net`;
+}
+
+function patchSendMessage(waSock) {
+    const original = waSock.sendMessage.bind(waSock);
+    waSock.sendMessage = async (jid, content, options) => {
+        const dest = normalizeSendJid(jid);
+        if (dest !== jid) {
+            console.log(chalk.gray(`[WA] JID normalisé: ${jid} → ${dest}`));
+        }
+        const sent = await original(dest, content, options);
+        if (sent?.key && sent.message) rememberWaMessage(sent.key, sent.message);
+        return sent;
+    };
+}
+
 async function notifyOwner(text) {
     try {
-        const ownerJid = OWNER_PN + "@s.whatsapp.net";
         if (sock?.user && isConnected) {
-            await sock.sendMessage(ownerJid, { text: `🛡️ *LOGS SYSTÈME PSYCHO-BOT*\n━━━━━━━━━━━━━━\n${text}` });
+            await sock.sendMessage(getOwnerJid(), { text: `🛡️ *LOGS SYSTÈME PSYCHO-BOT*\n━━━━━━━━━━━━━━\n${text}` });
         }
     } catch (e) {
         console.error("Owner Notification Failed:", e.message);
@@ -1172,9 +1210,8 @@ app.post('/send-message', async (req, res) => {
         // Formater le numéro (enlever le + et ajouter @s.whatsapp.net)
         const cleanPhone = phone.replace(/[^0-9]/g, '');
 
-        // Toujours envoyer au propriétaire du bot (vous-même)
-        // C'est le seul moyen fiable d'éviter les erreurs de session WhatsApp
-        const jid = sock.user.id;
+        // Toujours envoyer au propriétaire du bot (vous-même), sans suffixe device
+        const jid = getOwnerJid();
 
         console.log(`[SEND-MESSAGE] Sending to bot owner (${cleanPhone}): ${jid}`);
 
@@ -1223,7 +1260,7 @@ app.post('/send-file', async (req, res) => {
             });
         }
 
-        const jid = sock.user.id;
+        const jid = getOwnerJid();
         console.log(`[SEND-FILE] Sending file to bot owner: ${jid}`);
 
         // Obtenir le buffer — depuis base64 ou depuis URL
@@ -1320,12 +1357,7 @@ app.post('/pullback-webhook', async (req, res) => {
             finalMessage = `[${phase.toUpperCase()}] ${symbol}\n${direction}`;
         }
 
-        // Envoyer au propriétaire du bot
-        // Utiliser sock.user.id si disponible, sinon OWNER_PN
-        let jid = OWNER_PN + "@s.whatsapp.net";
-        if (sock.user && sock.user.id) {
-            jid = sock.user.id;
-        }
+        const jid = getOwnerJid();
 
         console.log(`[PULLBACK-WEBHOOK] Sending to owner (${jid}): ${finalMessage.substring(0, 50)}...`);
 
@@ -1367,8 +1399,7 @@ app.get('/pullback-webhook/test', async (req, res) => {
             });
         }
 
-        // Envoyer un message test
-        const jid = sock.user.id;
+        const jid = getOwnerJid();
         const testMessage = `🧪 TEST WEBHOOK\n${new Date().toISOString()}\nPullback alert system is working!`;
 
         await sock.sendMessage(jid, { text: testMessage });
@@ -1568,11 +1599,17 @@ async function startBot() {
         retryRequestDelayMs: 2000,
         maxMsgRetryCount: 5,
         syncFullHistory: false,
-        shouldSyncHistoryMessage: () => false,
+        shouldSyncHistoryMessage: () => true,
         shouldIgnoreJid: (jid) => jid?.includes('@newsletter') || jid === 'status@broadcast',
         agent: proxyAgent,
+        getMessage: async (key) => {
+            if (!key?.id) return undefined;
+            return retryMessageStore.get(`${key.remoteJid}|${key.id}`)
+                || retryMessageStore.get(key.id);
+        },
     });
     console.log(chalk.cyan('[LOG] WASocket created'));
+    patchSendMessage(sock);
 
     sock.ev.on("creds.update", async () => {
         await saveCreds();
@@ -1899,13 +1936,16 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
             await delay(5000);
             if (!isConnected || !sock?.user) return;
 
-            await sock.sendMessage(sock.user.id, { text: msgText });
+            await sock.sendMessage(getOwnerJid(), { text: msgText });
             await backupFullSession();
             scheduleSessionSync();
         }
     });
 
     sock.ev.on("messages.upsert", async ({ messages, type }) => {
+        for (const m of messages || []) {
+            if (m?.key && m?.message) rememberWaMessage(m.key, m.message);
+        }
         if (type !== "notify") return;
         const msg = messages[0];
 
@@ -1931,7 +1971,7 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
                         await sock.sendMessage(jid, { forward: archived });
                     } else {
                         // Forward to Owner Private
-                        const ownerJid = sock.user.id.split(':')[0] + "@s.whatsapp.net";
+                        const ownerJid = getOwnerJid();
                         await sock.sendMessage(ownerJid, { text: `🚨 *Antidelete Privé* (de @${sender.split('@')[0]})\n` + senderText, mentions: [sender] });
                         await sock.sendMessage(ownerJid, { forward: archived });
                     }
@@ -2028,9 +2068,9 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
         // --- FORWARD TO OWNER (messages from others, private only) ---
         if (!isFromOwner && !remoteJid.endsWith('@g.us') && !remoteJid.endsWith('@broadcast') && sock?.user) {
             try {
-                const ownerJid = OWNER_PN + '@s.whatsapp.net';
+                const ownerJid = getOwnerJid();
                 // Don't forward if this IS the owner's own chat with the bot
-                if (remoteJid !== ownerJid) {
+                if (jidNormalizedUser(remoteJid) !== ownerJid) {
                     const senderName = msg.pushName || msgSenderClean;
                     const msgType = detectMessageType(msg.message);
                     const preview = text
@@ -2316,7 +2356,7 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
                         let buffer = Buffer.from([]);
                         for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
 
-                        const myJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+                        const myJid = getOwnerJid();
                         const caption = `🔓 *ViewOnce Extracted* (From: ${msg.pushName || 'Inconnu'})`;
                         const options = { jpegThumbnail: null };
 
@@ -2500,7 +2540,7 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
                             await sock.sendMessage(jid, { forward: archived });
                         } else {
                             // Forward to Owner Private
-                            const ownerJid = sock.user.id.split(':')[0] + "@s.whatsapp.net";
+                            const ownerJid = getOwnerJid();
                             await sock.sendMessage(ownerJid, { text: `🚨 *Antidelete Privé* (de @${sender.split('@')[0]})\n` + senderText, mentions: [sender] });
                             await sock.sendMessage(ownerJid, { forward: archived });
                         }
@@ -2545,7 +2585,7 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
                         let buffer = Buffer.from([]);
                         for await (const chunk of stream) buffer = Buffer.concat([buffer, chunk]);
 
-                        const myJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+                        const myJid = getOwnerJid();
                         const caption = `🔓 *ViewOnce Extracted* (From: ${archivedMsg.pushName || 'Inconnu'})`;
                         const type = mediaType.replace('Message', '');
                         const options = { jpegThumbnail: null };
@@ -2578,7 +2618,7 @@ ${isFirstConnectionToday ? '✨ *Nouvelle journee, nouvelles possibilites!* ✨'
 
                 try {
                     // Notify owner ONLY (no audio sent to caller)
-                    const ownerJid = (sock.user?.id || OWNER_PN + "@s.whatsapp.net").split(':')[0] + "@s.whatsapp.net";
+                    const ownerJid = getOwnerJid();
                     const callTime = new Date().toLocaleString('fr-FR', { timeZone: 'Africa/Porto-Novo' });
 
                     await sock.sendMessage(ownerJid, {
